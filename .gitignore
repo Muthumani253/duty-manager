@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.envrc
+/data/*.csv
+/data/*.xlsx
+.DS_Store
+.vscode/
+.ipynb_checkpoints/
+*.log

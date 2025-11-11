@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # streamlit_app.py
 """
-Duty Manager - Full application (fixed session_state error)
-- Avoids direct session_state assignment inside apply handler (fixes StreamlitAPIException)
-- Keeps selection visible after Apply by making selectbox key depend on saved EXTID
-- Treats EXTID == 0 as empty; suggestions show only free staff (same dept, different INSCODE)
+Duty Manager - Full application (Panel authoritative + live Duty Mark view)
+- Panel Upload = authoritative source; every change persists to data/panel.csv
+- Duty Mark reads st.session_state.panel_df (live)
+- EXTID allocation, Generate Duty, Busy all persist correctly
 Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR
 """
 from __future__ import annotations
 import os
-import io
 import uuid
 import traceback
 from datetime import datetime, timedelta, date
@@ -30,7 +29,7 @@ EXPORT_MONTH_TAG = "oct2025"
 os.makedirs(DATA_DIR, exist_ok=True)
 st.set_page_config(page_title="Duty Manager", layout="wide")
 
-# ---------- UTIL HELPERS ----------
+# ---------- HELPERS ----------
 def _now():
     return datetime.now().isoformat(timespec="seconds")
 
@@ -97,8 +96,12 @@ def load_or_empty(path, columns):
         return pd.DataFrame(columns=columns)
 
 def save_csv(df, path):
-    df.to_csv(path, index=False)
-    return path
+    try:
+        df.to_csv(path, index=False)
+        return True
+    except Exception as e:
+        st.error(f"Failed to write {path}: {e}")
+        return False
 
 def concat_row(df, rowdict):
     return pd.concat([df, pd.DataFrame([rowdict])], ignore_index=True)
@@ -259,21 +262,27 @@ if "busy_df" not in st.session_state:
 if "audit" not in st.session_state:
     st.session_state.audit = []
 
+# ---------- PERSISTENCE ----------
 def persist_panel():
+    # ensure rowid then write to disk and update session state
     st.session_state.panel_df = ensure_rowid(st.session_state.panel_df, prefix="p")
-    save_csv(st.session_state.panel_df, PANEL_PATH)
+    ok = save_csv(st.session_state.panel_df, PANEL_PATH)
+    return ok
 
 def persist_staff():
     st.session_state.staff_df = ensure_rowid(st.session_state.staff_df, prefix="s")
-    save_csv(st.session_state.staff_df, STAFF_PATH)
+    ok = save_csv(st.session_state.staff_df, STAFF_PATH)
+    return ok
 
 def persist_submap():
     st.session_state.submap = st.session_state.submap.fillna("")
-    save_csv(st.session_state.submap, SUBMAP_PATH)
+    ok = save_csv(st.session_state.submap, SUBMAP_PATH)
+    return ok
 
 def persist_busy():
     st.session_state.busy_df = ensure_rowid(st.session_state.busy_df, prefix="b")
-    save_csv(st.session_state.busy_df, BUSY_PATH)
+    ok = save_csv(st.session_state.busy_df, BUSY_PATH)
+    return ok
 
 def apply_busy_to_staff_cells(staff_df, staff_id, dfrom, dto, busy_token="B"):
     staff_df = staff_df.copy()
@@ -315,7 +324,7 @@ def remove_busy_from_staff_cells(staff_df, staff_id, dfrom, dto):
         staff_df.at[sidx, dc] = ",".join(toks) if toks else ""
     return staff_df
 
-# ---------- Staff stats utility ----------
+# ---------- Staff stats ----------
 def compute_staff_duty_stats(staff_df: pd.DataFrame):
     stats = {}
     if staff_df is None or staff_df.empty:
@@ -360,7 +369,7 @@ page = st.sidebar.radio("Pages", ["Panel Upload", "Duty Mark", "EXTID Allocate"]
 # ------------------- Panel Upload -------------------
 if page == "Panel Upload":
     st.header("📥 Panel Upload — upload & edit allocations")
-    st.info("Upload panel (allocations) and staff data. Deleted panel rows remove previous INSCODE tokens on staff grid.")
+    st.info("Panel (allocations) is the authoritative dataset. Any upload/save here persists to data/panel.csv and is shown live on Duty Mark page.")
 
     colA, colB = st.columns(2)
 
@@ -370,7 +379,7 @@ if page == "Panel Upload":
         st.markdown("**Required panel headers (exact):**")
         st.code("INSCODE\tNCNO\tSUBCODE\tREGL\tNOC\tNOB\tINTID\tEXTID\tDATE_FROM\tDATE_TO")
 
-        uploaded = st.file_uploader("Upload Panel CSV/XLSX (institute-wise). For each INSCODE in file, backend rows for that INSCODE will be replaced. Check 'Clear all existing panel data' to wipe backend first.", type=["csv","xlsx"], key="panel_upload")
+        uploaded = st.file_uploader("Upload Panel CSV/XLSX (institute-wise). Each upload replaces existing rows for the INSCODE(s) in file.", type=["csv","xlsx"], key="panel_upload")
 
         clear_all_checkbox = st.checkbox("Clear all existing panel data before upload", value=False)
 
@@ -391,6 +400,7 @@ if page == "Panel Upload":
                     backend = st.session_state.panel_df.copy()
 
                     if clear_all_checkbox:
+                        # Remove previous marks for all backend rows before replacing
                         existing = backend.copy()
                         staff = st.session_state.staff_df.copy()
                         for _, r in existing.iterrows():
@@ -404,9 +414,12 @@ if page == "Panel Upload":
                         backend = tmp.reset_index(drop=True)
                         backend = ensure_rowid(backend, prefix="p")
                         st.session_state.panel_df = backend.copy()
-                        persist_panel()
-                        st.success("Cleared old panel data and saved uploaded panel as backend (previous marks removed).")
+                        if persist_panel():
+                            st.success("Cleared old panel data and saved uploaded panel as backend (previous marks removed).")
+                        else:
+                            st.error("Failed to persist panel.csv")
                     else:
+                        # For INSCODE(s) in upload: remove previous marks for those INSCODEs first
                         ins_in_upload = sorted([str(x).strip() for x in tmp["INSCODE"].unique() if str(x).strip() != ""])
                         staff = st.session_state.staff_df.copy()
                         for ins in ins_in_upload:
@@ -418,13 +431,16 @@ if page == "Panel Upload":
                         st.session_state.staff_df = staff.copy()
                         persist_staff()
 
+                        # replace backend rows for those INSCODEs and append the upload rows
                         for ins in ins_in_upload:
                             backend = backend[backend["INSCODE"].astype(str).str.strip() != str(ins)]
                         backend = pd.concat([backend.reset_index(drop=True), tmp.reset_index(drop=True)], ignore_index=True)
                         backend = ensure_rowid(backend.reset_index(drop=True), prefix="p")
                         st.session_state.panel_df = backend.copy()
-                        persist_panel()
-                        st.success(f"Uploaded and replaced backend rows for INSCODE(s): {', '.join(ins_in_upload)}")
+                        if persist_panel():
+                            st.success(f"Uploaded and replaced backend rows for INSCODE(s): {', '.join(ins_in_upload)}")
+                        else:
+                            st.error("Failed to persist panel.csv")
             except Exception as e:
                 st.error("Failed to load panel upload: " + str(e))
 
@@ -447,8 +463,10 @@ if page == "Panel Upload":
                     sm2 = sm[["SUBCODE","SUBNAME"]].copy()
                 if sm2 is not None:
                     st.session_state.submap = sm2.copy()
-                    persist_submap()
-                    st.success("SUBCODE -> SUBNAME mapping uploaded and saved.")
+                    if persist_submap():
+                        st.success("SUBCODE -> SUBNAME mapping uploaded and saved.")
+                    else:
+                        st.error("Failed to persist submap")
             except Exception as e:
                 st.error("Failed to load submap upload: " + str(e))
 
@@ -477,7 +495,7 @@ if page == "Panel Upload":
                 backend_idx = backend.set_index("__rowid", drop=False)
                 edited_idx = to_save.set_index("__rowid", drop=False)
 
-                # detect deletions
+                # detect deletions -> remove corresponding INSCODE tokens from staff
                 to_drop = [rid for rid in backend_idx.index if rid not in edited_idx.index]
                 if to_drop:
                     staff = st.session_state.staff_df.copy()
@@ -507,8 +525,10 @@ if page == "Panel Upload":
                 if "ERROR" not in backend_final.columns:
                     backend_final["ERROR"] = ""
                 st.session_state.panel_df = backend_final.copy()
-                persist_panel()
-                st.success("Saved edited panel rows into backend (deletions persisted).")
+                if persist_panel():
+                    st.success("Saved edited panel rows into backend (deletions persisted).")
+                else:
+                    st.error("Failed to persist panel.csv")
             except Exception as e:
                 st.error("Failed to save edits: " + str(e))
 
@@ -530,8 +550,10 @@ if page == "Panel Upload":
                 persist_staff()
 
                 st.session_state.panel_df = ensure_rowid(pd.DataFrame(columns=PANEL_COLS), prefix="p")
-                persist_panel()
-                st.success("All panel data cleared and previous staff marks removed.")
+                if persist_panel():
+                    st.success("All panel data cleared and previous staff marks removed.")
+                else:
+                    st.error("Failed to persist panel.csv")
 
     # Staffdata upload/edit/clear INSCODE tokens
     with colB:
@@ -557,8 +579,10 @@ if page == "Panel Upload":
                             tmp[c] = ""
                     tmp = ensure_rowid(tmp, prefix="s")
                     st.session_state.staff_df = tmp[STAFF_CORE_COLS].copy()
-                    persist_staff()
-                    st.success("Staffdata uploaded and replaced backend staff table.")
+                    if persist_staff():
+                        st.success("Staffdata uploaded and replaced backend staff table.")
+                    else:
+                        st.error("Failed to persist staff.csv")
             except Exception as e:
                 st.error("Failed to load staff upload: " + str(e))
 
@@ -591,8 +615,10 @@ if page == "Panel Upload":
                     backend_idx = pd.concat([backend_idx.reset_index(drop=True), to_append.reset_index(drop=True)], ignore_index=True)
                 backend_final = ensure_rowid(backend_idx.reset_index(drop=True), prefix="s")
                 st.session_state.staff_df = backend_final.copy()
-                persist_staff()
-                st.success("Staff edits merged to backend.")
+                if persist_staff():
+                    st.success("Staff edits merged to backend.")
+                else:
+                    st.error("Failed to persist staff.csv")
             except Exception as e:
                 st.error("Save failed: " + str(e))
 
@@ -607,16 +633,19 @@ if page == "Panel Upload":
                 try:
                     staff_cleaned = clear_all_inscode_tokens_keep_busy(st.session_state.staff_df)
                     st.session_state.staff_df = staff_cleaned.copy()
-                    persist_staff()
-                    st.success("Cleared INSCODE tokens (busy tokens retained).")
+                    if persist_staff():
+                        st.success("Cleared INSCODE tokens (busy tokens retained).")
+                    else:
+                        st.error("Failed to persist staff.csv")
                 except Exception as e:
                     st.error("Failed to clear INSCODE tokens: " + str(e))
 
 # ------------------- Duty Mark -------------------
 elif page == "Duty Mark":
     st.header("▶️ Duty Mark — generate duties & busy management")
-    st.info("Generate Duty clears previous marks for processed rows, then applies fresh marks. Panel-level errors are written into panel ERROR column.")
+    st.info("This page shows the authoritative Panel data live (from Panel Upload). Any change you make on Panel Upload is shown here immediately.")
 
+    # ALWAYS read the authoritative panel from session state (live)
     panel = st.session_state.panel_df.copy()
     staff = st.session_state.staff_df.copy()
     busy_df = st.session_state.busy_df.copy()
@@ -650,16 +679,19 @@ elif page == "Duty Mark":
             lambda r: (str(r["INTID"]).strip() + (" — " + str(r["INTNAME"]).strip() if str(r["INTNAME"]).strip() else "")),
             axis=1
         )
-        st.dataframe(display_panel[["INSCODE","NCNO","SUBCODE","SUBNAME","REGL","NOC","NOB","INTID_with_name","EXTID","DATE_FROM","DATE_TO","ERROR"]].fillna(""), height=220)
+        # show the live authoritative panel table (will reflect changes made on Panel Upload)
+        st.dataframe(display_panel[["INSCODE","NCNO","SUBCODE","SUBNAME","REGL","NOC","NOB","INTID_with_name","EXTID","DATE_FROM","DATE_TO","ERROR"]].fillna(""), height=260)
 
         st.markdown("### Generate Duty (clean re-run)")
         if st.button("Generate Duty (clean re-run)"):
             try:
+                # Clear ERROR for processed rows in authoritative panel
                 for idx in filt.index:
                     if idx in st.session_state.panel_df.index:
                         st.session_state.panel_df.at[idx, "ERROR"] = ""
                 persist_panel()
 
+                # remove previous markings for those panel rows from staff grid
                 staff = st.session_state.staff_df.copy()
                 for _, r in filt.iterrows():
                     ins = str(r.get("INSCODE","")).strip()
@@ -669,6 +701,7 @@ elif page == "Duty Mark":
                 st.session_state.staff_df = staff.copy()
                 persist_staff()
 
+                # ensure date columns exist on staff
                 dates = set()
                 for _, r in filt.iterrows():
                     d1 = parse_date_flexible(r.get("DATE_FROM")); d2 = parse_date_flexible(r.get("DATE_TO"))
@@ -681,6 +714,7 @@ elif page == "Duty Mark":
                         st.session_state.staff_df[dc] = ""
                 staff = st.session_state.staff_df.copy()
 
+                # build staff_map
                 staff_map = {}
                 for idx_s, r in staff.iterrows():
                     sid_norm = normalize_staff_id(r.get("Staff ID"))
@@ -742,6 +776,7 @@ elif page == "Duty Mark":
                         else:
                             audit.append({"allocation_row_index": idx, "date_iso": dc, "role":"E","staff_id": "", "applied":False, "sheet2_before":None, "sheet2_after":None, "timestamp":_now()})
 
+                # write error flags into panel ERROR column and persist panel
                 if error_panel_rows:
                     for pidx, reasons in error_panel_rows.items():
                         val = "; ".join(sorted(reasons))
@@ -775,7 +810,6 @@ elif page == "Duty Mark":
 
         st.markdown("---")
         st.subheader("Busy management (date-range)")
-
         with st.form("add_busy_form", clear_on_submit=False):
             col1, col2, col3 = st.columns([3,3,2])
             with col1:
@@ -832,7 +866,7 @@ elif page == "Duty Mark":
             date_cols_sorted = date_cols
         non_date_cols = [c for c in staff_cols if c not in date_cols_sorted]
         show_cols = non_date_cols + date_cols_sorted
-        st.dataframe(st.session_state.staff_df[show_cols].fillna(""), height=400)
+        st.dataframe(st.session_state.staff_df[show_cols].fillna(""), height=420)
 
         st.markdown("---")
         st.subheader("Run Checks")
@@ -922,8 +956,9 @@ elif page == "Duty Mark":
 # ------------------- EXTID Allocate -------------------
 elif page == "EXTID Allocate":
     st.header("🧾 EXTID Allocate — assign externals")
-    st.info("Filter by INSCODE and Department. Suggestions show only free staff from same dept and different institute. Apply allowed only for free staff.")
+    st.info("Filter by INSCODE and Department. Suggestions show free staff (same dept & different INSCODE). Apply will persist to Panel and Staff data.")
 
+    # authoritative panel
     panel = st.session_state.panel_df.copy()
     staff = st.session_state.staff_df.copy()
     submap = st.session_state.submap.copy()
@@ -1039,7 +1074,6 @@ elif page == "EXTID Allocate":
                             if s["staff_id"] == existing_norm:
                                 existing_label = s["label"]
                                 break
-                    # key depends on current saved EXTID so after apply the widget is re-created with updated key
                     key_sugg = f"sugg_{pidx}_{existing_norm if existing_norm else ''}"
                     sel = st.selectbox(f"🔎 Suggestions — {pidx}", options=select_opts, key=key_sugg)
                 else:
@@ -1090,14 +1124,17 @@ elif page == "EXTID Allocate":
                         st.error("Invalid panel row dates or INSCODE — cannot apply.")
                         continue
 
+                    # build staff2 and ensure date cols
                     staff2 = st.session_state.staff_df.copy()
                     for d in daterange(d1, d2):
                         dc = date_to_str(d)
                         if dc not in staff2.columns:
                             staff2[dc] = ""
 
+                    # Remove previous INSCODE tokens for this panel row across all staff (clean per-row)
                     staff2 = remove_inscode_from_staff_cells(staff2, ins, d1, d2)
 
+                    # find or add staff row
                     mask = staff2["Staff ID"].astype(str).str.upper() == staff_id_only_norm.upper()
                     if not mask.any():
                         new = {c:"" for c in staff2.columns}
@@ -1107,6 +1144,7 @@ elif page == "EXTID Allocate":
 
                     sidx = staff2[mask].index[0]
 
+                    # Check availability again (must be free)
                     busy_found = []
                     for d in daterange(d1, d2):
                         dc = date_to_str(d)
@@ -1123,6 +1161,7 @@ elif page == "EXTID Allocate":
                             persist_panel()
                         continue
 
+                    # Append INSCODE for each date to the chosen EXT staff (allow duplicates)
                     for d in daterange(d1, d2):
                         dc = date_to_str(d)
                         cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
@@ -1132,6 +1171,7 @@ elif page == "EXTID Allocate":
                         else:
                             staff2.at[sidx, dc] = cur_s + "," + ins
 
+                    # Also append to INTID (if present and valid)
                     intid = normalize_staff_id(row.get("INTID"))
                     if intid:
                         mask_i = staff2["Staff ID"].astype(str).str.upper() == intid.upper()
@@ -1150,18 +1190,20 @@ elif page == "EXTID Allocate":
                             else:
                                 staff2.at[iidx, dc] = cur_s + "," + ins
 
+                    # persist: set EXTID in authoritative panel row to normalized value
                     if pidx in st.session_state.panel_df.index:
                         st.session_state.panel_df.at[pidx, "EXTID"] = staff_id_only_norm
                         prev_err = st.session_state.panel_df.at[pidx, "ERROR"]
                         if prev_err and "EXT apply failed" in prev_err:
                             parts = [pt for pt in str(prev_err).split(";") if "EXT apply failed" not in pt]
                             st.session_state.panel_df.at[pidx, "ERROR"] = ";".join([p.strip() for p in parts if p.strip()!=""])
+                        persist_panel()  # persist authoritative panel immediately
 
+                    # persist staff
                     st.session_state.staff_df = staff2.copy()
                     persist_staff()
-                    persist_panel()
 
-                    # success message — selectbox key includes saved EXTID on next rerun so displayed selection persists
+                    # success message
                     st.success(f"✅ Applied EXTID {staff_id_only_norm} and saved. INSCODE {ins} marked for {date_to_str(d1)} → {date_to_str(d2)}")
 
         st.markdown("---")

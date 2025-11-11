@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # streamlit_app.py
 """
-Duty Manager - Full application with staff-id normalization fix
-- Treats 0 / '0' / empty / NaN staff IDs as invalid (ignored in lookups and not auto-added).
-- All other logic and UI preserved exactly as before.
+Duty Manager - Full application with:
+ - INTID staff name shown (already present)
+ - EXTID per-row Apply now performs immediate per-row clean mark (appends INSCODE tokens)
+ - EXTID row header includes NOC
+ - Suggestions show department (in display)
 Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR
 """
 from __future__ import annotations
@@ -137,6 +139,26 @@ def normalize_staff_id(v) -> str:
         return ""
     return s.upper()
 
+def get_staff_name_by_id(staff_df: pd.DataFrame, staff_id) -> str:
+    """
+    Return the 'Name of the Staff' for a given staff_id (normalized).
+    Returns empty string if not found or staff_id invalid.
+    """
+    sid = normalize_staff_id(staff_id)
+    if not sid:
+        return ""
+    # match normalized staff id in staff_df (case-insensitive)
+    try:
+        mask = staff_df["Staff ID"].astype(str).str.upper() == sid
+    except Exception:
+        return ""
+    if mask.any():
+        try:
+            return str(staff_df.loc[mask, "Name of the Staff"].iloc[0])
+        except Exception:
+            return ""
+    return ""
+
 # token splitting and busy detection
 SPLIT_RE = re.compile(r"[,\uFF0C\u3001;|\-/\\_\s]+")
 
@@ -177,7 +199,7 @@ def is_busy_token(tok):
         return True
     return False
 
-# ---------- INSCODE removal utilities ----------
+# ---------- INSCODE removal/utilities ----------
 def remove_inscode_from_staff_cells(staff_df: pd.DataFrame, inscode: str, dfrom: date, dto: date):
     """Remove exact tokens equal to inscode from staff date cells in range."""
     if not inscode:
@@ -601,12 +623,21 @@ elif page == "Duty Mark":
         filt["_parsed_date_from"] = filt["DATE_FROM"].apply(parse_date_flexible)
         filt = filt.sort_values(by="_parsed_date_from", na_position="last").drop(columns=["_parsed_date_from"])
 
+        # --- include INTID name next to INTID in display ---
         display_panel = filt.copy()
+        # map INTID -> INTNAME using staff data
+        display_panel["INTID_NORM"] = display_panel["INTID"].apply(lambda v: normalize_staff_id(v))
+        display_panel["INTNAME"] = display_panel["INTID_NORM"].apply(lambda sid: get_staff_name_by_id(st.session_state.staff_df, sid) if sid else "")
         if not submap.empty:
             display_panel = display_panel.merge(submap[["SUBCODE","SUBNAME"]], how="left", on="SUBCODE")
         else:
             display_panel["SUBNAME"] = ""
-        st.dataframe(display_panel[["INSCODE","NCNO","SUBCODE","SUBNAME","REGL","NOC","NOB","INTID","EXTID","DATE_FROM","DATE_TO","ERROR"]].fillna(""), height=220)
+        # present INTID together with name in one column for a compact view
+        display_panel["INTID_with_name"] = display_panel.apply(
+            lambda r: (str(r["INTID"]).strip() + (" — " + str(r["INTNAME"]).strip() if str(r["INTNAME"]).strip() else "")),
+            axis=1
+        )
+        st.dataframe(display_panel[["INSCODE","NCNO","SUBCODE","SUBNAME","REGL","NOC","NOB","INTID_with_name","EXTID","DATE_FROM","DATE_TO","ERROR"]].fillna(""), height=220)
 
         st.markdown("### Generate Duty (clean re-run)")
         if st.button("Generate Duty (clean re-run)"):
@@ -969,7 +1000,18 @@ elif page == "EXTID Allocate":
             cols = st.columns([3,4,3,1,1])
             with cols[0]:
                 display_sub = f" — Subname: {subname}" if subname else ""
-                st.markdown(f"**Row {pidx}** • INSCODE **{row.get('INSCODE')}** • NCNO **{row.get('NCNO')}** • SUBCODE **{row.get('SUBCODE')}**{display_sub} • {row.get('DATE_FROM')} → {row.get('DATE_TO')}")
+                # show NOC and INT info (modified)
+                noc = row.get("NOC","")
+                intid_raw = row.get("INTID","")
+                intid_norm = normalize_staff_id(intid_raw)
+                intname = get_staff_name_by_id(st.session_state.staff_df, intid_norm) if intid_norm else ""
+                int_display = str(intid_raw).strip()
+                if intname:
+                    int_display = int_display + " — " + intname
+                st.markdown(
+                    f"**Row {pidx}** • INSCODE **{row.get('INSCODE')}** • NCNO **{row.get('NCNO')}** • SUBCODE **{row.get('SUBCODE')}**{display_sub} • NOC **{noc}** • {row.get('DATE_FROM')} → {row.get('DATE_TO')}  \n"
+                    f"**INT:** {int_display}"
+                )
             with cols[1]:
                 suggs = suggestions_for_row(row)
                 if suggs:
@@ -1004,20 +1046,74 @@ elif page == "EXTID Allocate":
                     if not any(s["Staff ID"] == staff_id_only_norm for s in staff_rows):
                         st.error("Selected staff not present in Staffdata. Re-upload/validate on Panel Upload page.")
                         continue
-                    sdf_row = st.session_state.staff_df[st.session_state.staff_df["Staff ID"].astype(str).str.upper() == staff_id_only_norm.upper()].iloc[0]
-                    busy = []
+
+                    # PER-ROW: attempt to immediately apply EXTID marking for this row (clean per-row mark)
+                    ins = str(row.get("INSCODE","")).strip()
                     d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
+                    if not ins or d1 is None or d2 is None or d1 > d2:
+                        st.error("Invalid panel row dates or INSCODE — cannot apply.")
+                        continue
+
+                    # ensure date cols exist
+                    staff2 = st.session_state.staff_df.copy()
                     for d in daterange(d1, d2):
                         dc = date_to_str(d)
-                        val = sdf_row.get(dc,"") if dc in st.session_state.staff_df.columns else ""
-                        if split_tokens(val):
-                            busy.append(dc)
-                    if busy:
-                        st.error(f"{staff_id_only_norm} busy on: {', '.join(busy)}")
+                        if dc not in staff2.columns:
+                            staff2[dc] = ""
+
+                    # find or add staff row
+                    mask = staff2["Staff ID"].astype(str).str.upper() == staff_id_only_norm.upper()
+                    if not mask.any():
+                        # add minimal row for this staff id (other columns blank)
+                        new = {c:"" for c in staff2.columns}
+                        new["Staff ID"] = staff_id_only_norm
+                        staff2 = concat_row(staff2, new)
+                        mask = staff2["Staff ID"].astype(str).str.upper() == staff_id_only_norm.upper()
+
+                    sidx = staff2[mask].index[0]
+
+                    # check availability (no tokens except busy allowed? user wanted availability)
+                    busy_found = []
+                    for d in daterange(d1, d2):
+                        dc = date_to_str(d)
+                        cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
+                        toks = split_tokens(cur)
+                        if toks:
+                            busy_found.append(dc)
+                    if busy_found:
+                        st.error(f"Cannot apply EXTID {staff_id_only_norm}: already has token(s) on {', '.join(busy_found)}")
+                        # record error on panel row
+                        if pidx in st.session_state.panel_df.index:
+                            prev = st.session_state.panel_df.at[pidx, "ERROR"]
+                            newerr = (str(prev) + "; " if str(prev).strip() else "") + f"EXT apply failed busy:{','.join(busy_found)}"
+                            st.session_state.panel_df.at[pidx, "ERROR"] = newerr
+                            persist_panel()
                         continue
-                    st.session_state.panel_df.at[pidx,"EXTID"] = staff_id_only_norm
+
+                    # append INSCODE blindly (allow duplicates) for each date
+                    for d in daterange(d1, d2):
+                        dc = date_to_str(d)
+                        cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
+                        cur_s = "" if cur is None else str(cur).strip()
+                        if cur_s == "":
+                            staff2.at[sidx, dc] = ins
+                        else:
+                            staff2.at[sidx, dc] = cur_s + "," + ins
+
+                    # persist: set EXTID in panel row, update staff, clear any panel ERROR for this row
+                    if pidx in st.session_state.panel_df.index:
+                        st.session_state.panel_df.at[pidx, "EXTID"] = staff_id_only_norm
+                        # remove previous error fragment if any about EXT apply? we simply clear overall if success
+                        prev_err = st.session_state.panel_df.at[pidx, "ERROR"]
+                        # remove any EXT apply busy message fragments (simple approach: if contains 'EXT apply failed' keep others)
+                        if prev_err and "EXT apply failed" in prev_err:
+                            # remove that part
+                            parts = [pt for pt in str(prev_err).split(";") if "EXT apply failed" not in pt]
+                            st.session_state.panel_df.at[pidx, "ERROR"] = ";".join([p.strip() for p in parts if p.strip()!=""])
+                    st.session_state.staff_df = staff2.copy()
+                    persist_staff()
                     persist_panel()
-                    st.success(f"Staged EXTID={staff_id_only_norm} for panel row {pidx}")
+                    st.success(f"Applied EXTID {staff_id_only_norm} and marked INSCODE {ins} for dates {date_to_str(d1)}→{date_to_str(d2)}")
 
         st.markdown("---")
         if st.button("Commit staged EXTIDs to Staffdata"):

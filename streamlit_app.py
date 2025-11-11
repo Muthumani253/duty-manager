@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # streamlit_app.py
 """
-Duty Manager - Full application (EXTID correction)
-- Treat EXTID == 0 as empty for allocation
-- Suggest dropdown shows only free staffs (different INSCODE & same dept)
-- After Apply: persist and keep selection visible + show green saved message
+Duty Manager - Full application (corrected)
+- Fixes KeyError in EXTID Allocate manual list generation
+- Adds per-row clean apply logic (immediate, persisted)
+- Shows duty_count and availability in suggestions and manual list
 Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR
 """
 from __future__ import annotations
@@ -122,8 +122,7 @@ def normalize_staff_id(v) -> str:
     s = str(v).strip()
     if s == "":
         return ""
-    # treat numeric zeros as empty
-    if s in ("0", "0.0", "0.00"):
+    if s in ("0", "0.0"):
         return ""
     if re.fullmatch(r"-?\d+\.\d+", s):
         try:
@@ -135,12 +134,6 @@ def normalize_staff_id(v) -> str:
     if s == "0":
         return ""
     return s.upper()
-
-def is_zero_like(v) -> bool:
-    if v is None:
-        return False
-    s = str(v).strip()
-    return s in ("0", "0.0", "0.00")
 
 def get_staff_name_by_id(staff_df: pd.DataFrame, staff_id) -> str:
     """
@@ -757,23 +750,19 @@ elif page == "Duty Mark":
                             error_panel_rows.setdefault(idx, set()).add("INTID empty")
                             audit.append({"allocation_row_index": idx, "date_iso": dc, "role":"I","staff_id": "", "applied":False, "sheet2_before":None, "sheet2_after":None, "timestamp":_now(), "error":"INTID empty"})
 
-                        extid_raw = r.get("EXTID","")
-                        extid_norm = normalize_staff_id(extid_raw)
-                        # treat EXTID '0' as empty
-                        if is_zero_like(extid_raw):
-                            extid_norm = ""
-                        if extid_norm:
-                            if extid_norm not in staff_map:
+                        extid = normalize_staff_id(r.get("EXTID"))
+                        if extid:
+                            if extid not in staff_map:
                                 total_errors += 1
-                                error_panel_rows.setdefault(idx, set()).add(f"EXTID {extid_norm} not found")
-                                audit.append({"allocation_row_index": idx, "date_iso": dc, "role":"E","staff_id": extid_norm, "applied":False, "sheet2_before":None, "sheet2_after":None, "timestamp":_now(), "error":"EXTID not found"})
+                                error_panel_rows.setdefault(idx, set()).add(f"EXTID {extid} not found")
+                                audit.append({"allocation_row_index": idx, "date_iso": dc, "role":"E","staff_id": extid, "applied":False, "sheet2_before":None, "sheet2_after":None, "timestamp":_now(), "error":"EXTID not found"})
                             else:
-                                sidx = staff_map[extid_norm]
+                                sidx = staff_map[extid]
                                 before = staff.at[sidx, dc] if dc in staff.columns else ""
                                 after = ("" if before is None or str(before).strip()=="" else str(before).strip() + ",") + ins
                                 staff.at[sidx, dc] = after
                                 total_appends += 1
-                                audit.append({"allocation_row_index": idx, "date_iso": dc, "role":"E","staff_id": extid_norm, "applied":True, "sheet2_before": before, "sheet2_after": after, "timestamp":_now()})
+                                audit.append({"allocation_row_index": idx, "date_iso": dc, "role":"E","staff_id": extid, "applied":True, "sheet2_before": before, "sheet2_after": after, "timestamp":_now()})
                         else:
                             audit.append({"allocation_row_index": idx, "date_iso": dc, "role":"E","staff_id": "", "applied":False, "sheet2_before":None, "sheet2_after":None, "timestamp":_now()})
 
@@ -958,7 +947,7 @@ elif page == "Duty Mark":
 # ------------------- EXTID Allocate -------------------
 elif page == "EXTID Allocate":
     st.header("🧾 EXTID Allocate — assign externals")
-    st.info("Filter by INSCODE and Department. Suggestions show staff (inst, staffid, name, dept) with duty count and availability. Apply only allowed for free staff from same dept & different institute.")
+    st.info("Filter by INSCODE and Department. Suggestions show staff (inst, staffid, name, dept) with duty count and availability. Apply only allowed for free staff.")
 
     panel = st.session_state.panel_df.copy()
     staff = st.session_state.staff_df.copy()
@@ -977,13 +966,10 @@ elif page == "EXTID Allocate":
             return m.iloc[0]["SUBNAME"]
         return ""
 
-    # needs_ext: treat EXTID == 0 as empty
     def needs_ext(r):
-        intid = str(r.get("INTID","")).strip()
-        extid_raw = r.get("EXTID","")
-        ext_empty = (str(extid_raw).strip() == "") or is_zero_like(extid_raw)
+        intid = r.get("INTID",""); extid = r.get("EXTID","")
         d1 = parse_date_flexible(r.get("DATE_FROM")); d2 = parse_date_flexible(r.get("DATE_TO"))
-        return intid != "" and ext_empty and (d1 is not None and d2 is not None and d1 <= d2)
+        return str(intid).strip() != "" and (str(extid).strip() == "") and (d1 is not None and d2 is not None and d1 <= d2)
 
     candidates = panel[panel.apply(needs_ext, axis=1)].copy()
     if ins_sel3 != "All":
@@ -997,7 +983,7 @@ elif page == "EXTID Allocate":
     st.metric("Rows needing EXTID (visible)", len(candidates))
     st.metric("Staff rows", len(st.session_state.staff_df))
 
-    # build staff_rows list (only normalized entries)
+    # build staff_rows list
     staff_rows = []
     for _, s in st.session_state.staff_df.iterrows():
         sid_norm = normalize_staff_id(s.get("Staff ID"))
@@ -1012,10 +998,6 @@ elif page == "EXTID Allocate":
         """
         Return list of suggestion dicts with fields:
          - staff_id, label, duty_count (int), is_free(bool), conflicts(list)
-        Filtered to:
-         - is_free == True
-         - same department as panel row (NCNO == staff.dep code)
-         - different institute (staff.INSTT != panel.INSCODE)
         """
         ins = str(row.get("INSCODE","")).strip()
         dept = str(row.get("NCNO","")).strip()
@@ -1026,20 +1008,15 @@ elif page == "EXTID Allocate":
 
         candidates_out = []
         for s in staff_rows:
-            # exclude same institute staff
             if s["INSTT"] == ins:
                 continue
-            # require same department
             if dept and str(s["dep code"]).strip() and str(s["dep code"]).strip() != str(dept).strip():
                 continue
             sid = s["Staff ID"]
             stats_entry = staff_stats.get(sid, {"duty_count":0, "date_tokens":{}, "INSTT": s["INSTT"], "dep_code": s["dep code"], "name": s.get("name","")})
             duty_count = stats_entry.get("duty_count", 0)
             is_free, conflicts = availability_for_req_dates(stats_entry, req_dates)
-            # only include free staff in suggestions
-            if not is_free:
-                continue
-            avail_label = "free"
+            avail_label = "free" if is_free else ("duty:" + ",".join(conflicts) if conflicts else "busy")
             label = f"{sid} — {s.get('name','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {avail_label}"
             candidates_out.append({
                 "staff_id": sid,
@@ -1051,9 +1028,9 @@ elif page == "EXTID Allocate":
                 "dep_code": s.get("dep code",""),
                 "name": s.get("name","")
             })
-        # sort frees by duty_count ascending, then staff id
-        frees = sorted(candidates_out, key=lambda x: (x["duty_count"], x["staff_id"]))
-        return frees
+        frees = sorted([c for c in candidates_out if c["is_free"]], key=lambda x: (x["duty_count"], x["staff_id"]))
+        notfrees = sorted([c for c in candidates_out if not c["is_free"]], key=lambda x: (x["duty_count"], len(x["conflicts"]), x["staff_id"]))
+        return frees + notfrees
 
     if candidates.empty:
         st.info("No rows require EXTID (for selected filters).")
@@ -1079,29 +1056,15 @@ elif page == "EXTID Allocate":
             with cols[1]:
                 suggs = suggestions_for_row_with_stats(row)
                 if suggs:
-                    top_preview = ", ".join([f"{s['staff_id']}(free)" for s in suggs[:6]])
+                    top_preview = ", ".join([f"{s['staff_id']}({'free' if s['is_free'] else 'duty'})" for s in suggs[:6]])
                     st.caption("Top suggestions: " + top_preview)
                     select_opts = [""] + [s["label"] for s in suggs]
-                    # default value: if panel already has EXTID, show that selection label if it exists
-                    existing_ext = st.session_state.panel_df.at[pidx, "EXTID"] if pidx in st.session_state.panel_df.index else ""
-                    existing_label = ""
-                    if existing_ext:
-                        existing_norm = normalize_staff_id(existing_ext)
-                        for s in suggs:
-                            if s["staff_id"] == existing_norm:
-                                existing_label = s["label"]
-                                break
-                    # use session_state key to preserve selection after apply
-                    key_sugg = f"sugg_{pidx}"
-                    if key_sugg not in st.session_state:
-                        # initialize to existing label or empty
-                        st.session_state[key_sugg] = existing_label if existing_label else ""
-                    sel = st.selectbox(f"🔎 Suggestions — {pidx}", options=select_opts, key=key_sugg)
+                    sel = st.selectbox(f"🔎 Suggestions — {pidx}", options=select_opts, key=f"sugg_{pidx}")
                 else:
                     sel = ""
-                    st.caption("⚠️ No suggestions (free staff from same dept & different institute)")
+                    st.caption("⚠️ No suggestions")
             with cols[2]:
-                # manual options per row (unfiltered)
+                # build manual options per row (compute labels per req_dates)
                 d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
                 req_dates = [date_to_str(d) for d in daterange(d1, d2)] if (d1 and d2) else []
                 man_list = [""]
@@ -1113,13 +1076,10 @@ elif page == "EXTID Allocate":
                     avail_label = "free" if is_free else ("duty:" + ",".join(conflicts) if conflicts else "busy")
                     label = f"{sid} — {s.get('name','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {avail_label}"
                     man_list.append(label)
-                key_man = f"man_{pidx}"
-                if key_man not in st.session_state:
-                    st.session_state[key_man] = ""
-                man = st.selectbox(f"✍️ Manual — {pidx}", options=man_list, key=key_man)
+                man = st.selectbox(f"✍️ Manual — {pidx}", options=man_list, key=f"man_{pidx}")
             with cols[3]:
                 staged = st.session_state.panel_df.at[pidx,"EXTID"] if pidx in st.session_state.panel_df.index else ""
-                if staged and str(staged).strip() != "" and not is_zero_like(staged):
+                if staged and str(staged).strip() != "":
                     st.success("✅")
                 else:
                     st.write("◻️")
@@ -1154,6 +1114,7 @@ elif page == "EXTID Allocate":
                             staff2[dc] = ""
 
                     # Remove previous INSCODE tokens for this panel row across all staff (clean per-row)
+                    # This ensures re-applying doesn't leave stale tokens
                     staff2 = remove_inscode_from_staff_cells(staff2, ins, d1, d2)
 
                     # find or add staff row
@@ -1166,7 +1127,7 @@ elif page == "EXTID Allocate":
 
                     sidx = staff2[mask].index[0]
 
-                    # Check availability again (must be free)
+                    # Check availability again
                     busy_found = []
                     for d in daterange(d1, d2):
                         dc = date_to_str(d)
@@ -1183,7 +1144,7 @@ elif page == "EXTID Allocate":
                             persist_panel()
                         continue
 
-                    # Append INSCODE for each date to the chosen EXT staff (allow duplicates)
+                    # Append INSCODE for each date to the chosen EXT staff
                     for d in daterange(d1, d2):
                         dc = date_to_str(d)
                         cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
@@ -1203,6 +1164,7 @@ elif page == "EXTID Allocate":
                             staff2 = concat_row(staff2, new)
                             mask_i = staff2["Staff ID"].astype(str).str.upper() == intid.upper()
                         iidx = staff2[mask_i].index[0]
+                        # check availability for INTID? In your spec INTID is appended blindly during generate; maintain same behavior here
                         for d in daterange(d1, d2):
                             dc = date_to_str(d)
                             cur = staff2.at[iidx, dc] if dc in staff2.columns else ""
@@ -1212,7 +1174,7 @@ elif page == "EXTID Allocate":
                             else:
                                 staff2.at[iidx, dc] = cur_s + "," + ins
 
-                    # persist: set EXTID in panel row to normalized value (if selected was '0' it would have been filtered earlier)
+                    # persist: set EXTID in panel row, update staff, clear EXT apply error fragment if present
                     if pidx in st.session_state.panel_df.index:
                         st.session_state.panel_df.at[pidx, "EXTID"] = staff_id_only_norm
                         prev_err = st.session_state.panel_df.at[pidx, "ERROR"]
@@ -1223,17 +1185,7 @@ elif page == "EXTID Allocate":
                     st.session_state.staff_df = staff2.copy()
                     persist_staff()
                     persist_panel()
-
-                    # Ensure suggestion selectbox keeps the chosen label
-                    key_sugg = f"sugg_{pidx}"
-                    # Rebuild label from current staff stats (duty_count may have changed)
-                    # Recompute staff_stats and label quickly
-                    staff_stats_new = compute_staff_duty_stats(st.session_state.staff_df)
-                    s_entry = staff_stats_new.get(staff_id_only_norm, {"duty_count":0, "INSTT":"", "dep_code":"", "name": ""})
-                    label_now = f"{staff_id_only_norm} — {s_entry.get('name','')} — INST:{s_entry.get('INSTT','')} — DEP:{s_entry.get('dep_code','')} — duties:{s_entry.get('duty_count',0)} — free"
-                    st.session_state[key_sugg] = label_now
-
-                    st.success(f"✅ Applied EXTID {staff_id_only_norm} and saved. INSCODE {ins} marked for {date_to_str(d1)} → {date_to_str(d2)}")
+                    st.success(f"Applied EXTID {staff_id_only_norm} and marked INSCODE {ins} for dates {date_to_str(d1)} → {date_to_str(d2)}")
 
         st.markdown("---")
         if st.button("Commit staged EXTIDs to Staffdata"):

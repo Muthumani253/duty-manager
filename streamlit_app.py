@@ -2,12 +2,10 @@
 # streamlit_app.py
 """
 Duty Manager - Full application with:
- - INTID staff name shown
- - EXTID suggestions and manual picks include:
-     * duty count (total non-B tokens across all dates)
-     * availability for requested dates: "free" or "duty:INSCODE,..."
- - Suggestions sorted: free first (then by duty count), non-free next.
- - Apply (per-row immediate apply) only allowed when staff is free for requested dates.
+ - INTID staff name shown (already present)
+ - EXTID per-row Apply now performs immediate per-row clean mark (appends INSCODE tokens)
+ - EXTID row header includes NOC
+ - Suggestions show department (in display)
 Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR
 """
 from __future__ import annotations
@@ -330,54 +328,6 @@ def remove_busy_from_staff_cells(staff_df, staff_id, dfrom, dto):
         toks = [t for t in split_tokens(cur) if not is_busy_token(t)]
         staff_df.at[sidx, dc] = ",".join(toks) if toks else ""
     return staff_df
-
-# ---------- Staff stats utility (new) ----------
-def compute_staff_duty_stats(staff_df: pd.DataFrame):
-    """
-    Compute for each normalized staff id:
-     - duty_count: total count of non-B tokens across all date columns
-     - date_tokens_map: {date_col: [tokens...]}
-    Returns: dict mapping staff_id_norm -> {"duty_count":int, "date_tokens":{dc:[tok,...]}}
-    """
-    stats = {}
-    if staff_df is None or staff_df.empty:
-        return stats
-    # identify date columns (dd.mm.yyyy style)
-    cols = [c for c in staff_df.columns if c != "__rowid"]
-    date_cols = [c for c in cols if isinstance(c, str) and len(c.split(".")) == 3 and all(part.isdigit() for part in c.split("."))]
-    for _, row in staff_df.iterrows():
-        sid = normalize_staff_id(row.get("Staff ID"))
-        if not sid:
-            continue
-        date_map = {}
-        duty_count = 0
-        for dc in date_cols:
-            cell = row.get(dc, "")
-            toks = split_tokens(cell)
-            date_map[dc] = toks
-            # count non-B tokens
-            for t in toks:
-                if not is_busy_token(t):
-                    duty_count += 1
-        stats[sid] = {"duty_count": duty_count, "date_tokens": date_map, "INSTT": row.get("INSTT",""), "dep_code": row.get("dep code",""), "name": row.get("Name of the Staff","")}
-    return stats
-
-def availability_for_req_dates(stats_entry, req_dates):
-    """
-    Given stats entry and requested date columns (strings like '31.10.2025'),
-    return (is_free:bool, conflicting_inscodes:list(sorted unique strings))
-    """
-    if stats_entry is None:
-        return (True, [])
-    date_tokens = stats_entry.get("date_tokens", {})
-    conflicts = []
-    for dc in req_dates:
-        toks = date_tokens.get(dc, []) if date_tokens is not None else []
-        for t in toks:
-            if not is_busy_token(t):
-                if t and t not in conflicts:
-                    conflicts.append(t)
-    return (len(conflicts) == 0, sorted(conflicts))
 
 # ---------- UI ----------
 st.title("🗂️ Duty Manager")
@@ -961,7 +911,7 @@ elif page == "Duty Mark":
 # ------------------- EXTID Allocate -------------------
 elif page == "EXTID Allocate":
     st.header("🧾 EXTID Allocate — assign externals")
-    st.info("Filter by INSCODE and Department. Suggestions show staff (inst, staffid, name, dept) with duty count and availability. Apply only allowed for free staff.")
+    st.info("Filter by INSCODE and Department. Suggestions show staff (inst, staffid, name, dept). Single-line compact UI.")
 
     panel = st.session_state.panel_df.copy()
     staff = st.session_state.staff_df.copy()
@@ -1008,53 +958,36 @@ elif page == "EXTID Allocate":
         dept = s.get("dep code","") if "dep code" in s else ""
         # compact display: sid — name — inst — dept
         display = f"{sid_norm} — {name} — {inst} — {dept}"
-        staff_rows.append({"Staff ID": sid_norm, "display": display, "INSTT": inst, "dep code": dept, "name": name})
+        staff_rows.append({"Staff ID": sid_norm, "display": display, "INSTT": inst, "dep code": dept})
 
-    # precompute staff stats (duty_count and date_tokens)
-    staff_stats = compute_staff_duty_stats(st.session_state.staff_df)
-
-    def suggestions_for_row_with_stats(row):
-        """
-        Return list of suggestion dicts with fields:
-         - staff_id, display_label, duty_count (int), is_free(bool), conflicts(list)
-        Sorted: free first (by duty_count asc), then non-free (by duty_count asc, len(conflicts) asc)
-        """
+    def suggestions_for_row(row):
         ins = str(row.get("INSCODE","")).strip()
         dept = str(row.get("NCNO","")).strip()
         d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
         if not (d1 and d2):
             return []
         req_dates = [date_to_str(d) for d in daterange(d1, d2)]
-
-        candidates_out = []
+        out = []
         for s in staff_rows:
             # skip same institute staff
             if s["INSTT"] == ins:
                 continue
-            # department filter match (if panel dept provided, require same dep code)
+            # department filter match
             if dept and str(s["dep code"]).strip() and str(s["dep code"]).strip() != str(dept).strip():
                 continue
-            sid = s["Staff ID"]
-            stats_entry = staff_stats.get(sid, {"duty_count":0, "date_tokens":{}, "INSTT": s["INSTT"], "dep_code": s["dep code"], "name": s.get("name","")})
-            duty_count = stats_entry.get("duty_count", 0)
-            is_free, conflicts = availability_for_req_dates(stats_entry, req_dates)
-            # build display label containing duty count and availability
-            avail_label = "free" if is_free else ("duty:" + ",".join(conflicts) if conflicts else "busy")
-            label = f"{sid} — {s.get('name','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {avail_label}"
-            candidates_out.append({
-                "staff_id": sid,
-                "label": label,
-                "duty_count": duty_count,
-                "is_free": is_free,
-                "conflicts": conflicts,
-                "INSTT": s.get("INSTT",""),
-                "dep_code": s.get("dep code",""),
-                "name": s.get("name","")
-            })
-        # sort
-        frees = sorted([c for c in candidates_out if c["is_free"]], key=lambda x: (x["duty_count"], x["staff_id"]))
-        notfrees = sorted([c for c in candidates_out if not c["is_free"]], key=lambda x: (x["duty_count"], len(x["conflicts"]), x["staff_id"]))
-        return frees + notfrees
+            sdf_row = st.session_state.staff_df[st.session_state.staff_df["Staff ID"].astype(str).str.upper() == s["Staff ID"].upper()]
+            if sdf_row.empty:
+                continue
+            sdf_row = sdf_row.squeeze()
+            free_all = True
+            for dc in req_dates:
+                val = sdf_row.get(dc, "") if dc in st.session_state.staff_df.columns else ""
+                if split_tokens(val):
+                    free_all = False
+                    break
+            if free_all:
+                out.append(s["display"])
+        return sorted(out)
 
     if candidates.empty:
         st.info("No rows require EXTID (for selected filters).")
@@ -1064,9 +997,10 @@ elif page == "EXTID Allocate":
             subcode = row.get("SUBCODE","")
             subname = get_subname(subcode)
             # compact single-line UI columns
-            cols = st.columns([3,5,3,1,1])
+            cols = st.columns([3,4,3,1,1])
             with cols[0]:
                 display_sub = f" — Subname: {subname}" if subname else ""
+                # show NOC and INT info (modified)
                 noc = row.get("NOC","")
                 intid_raw = row.get("INTID","")
                 intid_norm = normalize_staff_id(intid_raw)
@@ -1079,21 +1013,15 @@ elif page == "EXTID Allocate":
                     f"**INT:** {int_display}"
                 )
             with cols[1]:
-                suggs = suggestions_for_row_with_stats(row)
+                suggs = suggestions_for_row(row)
                 if suggs:
-                    # show top 6 suggestions inline as caption for quick glance
-                    top_preview = ", ".join([f"{s['staff_id']}({ 'free' if s['is_free'] else 'duty' })" for s in suggs[:6]])
-                    st.caption("Top suggestions: " + top_preview)
-                    # full selectbox list
-                    select_opts = [""] + [s["label"] for s in suggs]
-                    sel = st.selectbox(f"🔎 Suggestions — {pidx}", options=select_opts, key=f"sugg_{pidx}")
+                    sel = st.selectbox(f"🔎 Suggestions — {pidx}", options=[""] + suggs, key=f"sugg_{pidx}")
                 else:
                     sel = ""
                     st.caption("⚠️ No suggestions")
             with cols[2]:
-                # manual options include same enriched label
-                man_list = [""] + [f"{s['label']}" for s in staff_rows if True]
-                man = st.selectbox(f"✍️ Manual — {pidx}", options=man_list, key=f"man_{pidx}")
+                man_opts = [""] + [s["display"] for s in staff_rows]
+                man = st.selectbox(f"✍️ Manual — {pidx}", options=man_opts, key=f"man_{pidx}")
             with cols[3]:
                 staged = st.session_state.panel_df.at[pidx,"EXTID"] if pidx in st.session_state.panel_df.index else ""
                 if staged and str(staged).strip() != "":
@@ -1102,44 +1030,31 @@ elif page == "EXTID Allocate":
                     st.write("◻️")
             with cols[4]:
                 if st.button("Apply", key=f"apply_{pidx}"):
-                    chosen_label = ""
+                    chosen = ""
                     if sel and str(sel).strip() != "":
-                        chosen_label = sel
+                        chosen = sel
                     elif man and str(man).strip() != "":
-                        chosen_label = man
+                        chosen = man
                     else:
                         st.warning("Choose suggestion or manual staff.")
                         continue
-
-                    # Extract staff id from chosen label (it starts with staff_id)
-                    staff_id_only = chosen_label.split("—")[0].strip()
+                    staff_id_only = chosen.split("—")[0].strip()
                     staff_id_only_norm = normalize_staff_id(staff_id_only)
                     if not staff_id_only_norm:
                         st.error("Selected staff ID is invalid (0 or blank). Please choose a valid staff.")
                         continue
-
-                    # get stats entry for this staff
-                    stats_entry = staff_stats.get(staff_id_only_norm, None)
-                    d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
-                    req_dates = [date_to_str(d) for d in daterange(d1, d2)]
-                    is_free, conflicts = availability_for_req_dates(stats_entry, req_dates)
-                    if not is_free:
-                        st.error(f"Cannot apply {staff_id_only_norm}. Conflicts on requested dates: {','.join(conflicts)}")
-                        # set panel row ERROR note about conflict
-                        if pidx in st.session_state.panel_df.index:
-                            prev = st.session_state.panel_df.at[pidx, "ERROR"]
-                            newerr = (str(prev) + "; " if str(prev).strip() else "") + f"EXT apply failed busy:{','.join(conflicts)}"
-                            st.session_state.panel_df.at[pidx, "ERROR"] = newerr
-                            persist_panel()
+                    if not any(s["Staff ID"] == staff_id_only_norm for s in staff_rows):
+                        st.error("Selected staff not present in Staffdata. Re-upload/validate on Panel Upload page.")
                         continue
 
-                    # PER-ROW: attempt immediate apply (append INSCODE tokens for staff on req dates)
+                    # PER-ROW: attempt to immediately apply EXTID marking for this row (clean per-row mark)
                     ins = str(row.get("INSCODE","")).strip()
+                    d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
                     if not ins or d1 is None or d2 is None or d1 > d2:
                         st.error("Invalid panel row dates or INSCODE — cannot apply.")
                         continue
 
-                    # ensure date cols exist in staff_df
+                    # ensure date cols exist
                     staff2 = st.session_state.staff_df.copy()
                     for d in daterange(d1, d2):
                         dc = date_to_str(d)
@@ -1149,6 +1064,7 @@ elif page == "EXTID Allocate":
                     # find or add staff row
                     mask = staff2["Staff ID"].astype(str).str.upper() == staff_id_only_norm.upper()
                     if not mask.any():
+                        # add minimal row for this staff id (other columns blank)
                         new = {c:"" for c in staff2.columns}
                         new["Staff ID"] = staff_id_only_norm
                         staff2 = concat_row(staff2, new)
@@ -1156,16 +1072,17 @@ elif page == "EXTID Allocate":
 
                     sidx = staff2[mask].index[0]
 
-                    # Double-check availability now (in the persisted staff2)
+                    # check availability (no tokens except busy allowed? user wanted availability)
                     busy_found = []
-                    for dc in req_dates:
-                        val = staff2.at[sidx, dc] if dc in staff2.columns else ""
-                        toks = split_tokens(val)
-                        # If there are non-B tokens, it's busy
-                        if any(not is_busy_token(t) for t in toks):
+                    for d in daterange(d1, d2):
+                        dc = date_to_str(d)
+                        cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
+                        toks = split_tokens(cur)
+                        if toks:
                             busy_found.append(dc)
                     if busy_found:
                         st.error(f"Cannot apply EXTID {staff_id_only_norm}: already has token(s) on {', '.join(busy_found)}")
+                        # record error on panel row
                         if pidx in st.session_state.panel_df.index:
                             prev = st.session_state.panel_df.at[pidx, "ERROR"]
                             newerr = (str(prev) + "; " if str(prev).strip() else "") + f"EXT apply failed busy:{','.join(busy_found)}"
@@ -1173,8 +1090,9 @@ elif page == "EXTID Allocate":
                             persist_panel()
                         continue
 
-                    # append INSCODE for each date (allow duplicates)
-                    for dc in req_dates:
+                    # append INSCODE blindly (allow duplicates) for each date
+                    for d in daterange(d1, d2):
+                        dc = date_to_str(d)
                         cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
                         cur_s = "" if cur is None else str(cur).strip()
                         if cur_s == "":
@@ -1182,19 +1100,20 @@ elif page == "EXTID Allocate":
                         else:
                             staff2.at[sidx, dc] = cur_s + "," + ins
 
-                    # Update panel EXTID and persist
+                    # persist: set EXTID in panel row, update staff, clear any panel ERROR for this row
                     if pidx in st.session_state.panel_df.index:
                         st.session_state.panel_df.at[pidx, "EXTID"] = staff_id_only_norm
-                        # clear previous EXT-related error fragment if present
+                        # remove previous error fragment if any about EXT apply? we simply clear overall if success
                         prev_err = st.session_state.panel_df.at[pidx, "ERROR"]
+                        # remove any EXT apply busy message fragments (simple approach: if contains 'EXT apply failed' keep others)
                         if prev_err and "EXT apply failed" in prev_err:
+                            # remove that part
                             parts = [pt for pt in str(prev_err).split(";") if "EXT apply failed" not in pt]
                             st.session_state.panel_df.at[pidx, "ERROR"] = ";".join([p.strip() for p in parts if p.strip()!=""])
-
                     st.session_state.staff_df = staff2.copy()
                     persist_staff()
                     persist_panel()
-                    st.success(f"Applied EXTID {staff_id_only_norm} and marked INSCODE {ins} for dates {req_dates[0]} → {req_dates[-1]}")
+                    st.success(f"Applied EXTID {staff_id_only_norm} and marked INSCODE {ins} for dates {date_to_str(d1)}→{date_to_str(d2)}")
 
         st.markdown("---")
         if st.button("Commit staged EXTIDs to Staffdata"):
@@ -1244,7 +1163,7 @@ elif page == "EXTID Allocate":
                 st.error(f"{len(fails)} commits failed (invalid ids or busy).")
                 st.dataframe(pd.DataFrame(fails))
 
-# ---------- small utilities (dedup) ----------
+# ---------- small utilities ----------
 def concat_row(df, rowdict):
     return pd.concat([df, pd.DataFrame([rowdict])], ignore_index=True)
 

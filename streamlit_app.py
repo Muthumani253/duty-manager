@@ -106,6 +106,66 @@ def save_csv(df, path):
 def concat_row(df, rowdict):
     return pd.concat([df, pd.DataFrame([rowdict])], ignore_index=True)
 
+# ---------- PREVIEW (staged) STAFF GRID ----------
+def build_preview_staff_df():
+    """
+    Return a staff_df copy that includes staged EXTID selections applied as INSCODE tokens
+    on the chosen staff rows for the corresponding panel row date ranges.
+    This preview is used only for availability/suggestion calculations so staging immediately
+    affects subsequent dropdowns.
+    """
+    base = st.session_state.staff_df.copy()
+    # ensure date columns exist for all staged ranges
+    staged = st.session_state.get("staged_ext", {}) or {}
+    for pidx_str, label in staged.items():
+        try:
+            pidx = int(pidx_str)
+        except Exception:
+            continue
+        if pidx not in st.session_state.panel_df.index:
+            continue
+        prow = st.session_state.panel_df.loc[pidx]
+        ins = str(prow.get("INSCODE","")).strip()
+        d1 = parse_date_flexible(prow.get("DATE_FROM")); d2 = parse_date_flexible(prow.get("DATE_TO"))
+        if not ins or d1 is None or d2 is None or d1 > d2:
+            continue
+        # extract staff id from label (strip emoji if present)
+        lbl = str(label)
+        lbl = lbl.replace("🟢 ","").replace("🟡 ","").replace("🔴 ","")
+        parts = lbl.split("—")
+        if not parts or not parts[0].strip():
+            continue
+        sid = normalize_staff_id(parts[0].strip())
+        if not sid:
+            continue
+        # ensure date columns exist
+        for d in daterange(d1, d2):
+            dc = date_to_str(d)
+            if dc not in base.columns:
+                base[dc] = ""
+        # find or add staff row
+        mask = base["Staff ID"].astype(str).str.upper() == sid.upper()
+        if not mask.any():
+            new = {c:"" for c in base.columns}
+            new["Staff ID"] = sid
+            base = concat_row(base, new)
+            mask = base["Staff ID"].astype(str).str.upper() == sid.upper()
+        sidx = base[mask].index[0]
+        # append the INSCODE token for each date (to simulate being assigned)
+        for d in daterange(d1, d2):
+            dc = date_to_str(d)
+            cur = base.at[sidx, dc] if dc in base.columns else ""
+            cur_s = "" if cur is None else str(cur).strip()
+            if cur_s == "":
+                base.at[sidx, dc] = ins
+            else:
+                # avoid duplicate token
+                toks = split_tokens(cur_s)
+                if ins not in toks:
+                    base.at[sidx, dc] = cur_s + "," + ins
+    return base
+
+
 # ---------- STAFF ID NORMALIZATION ----------
 def normalize_staff_id(v) -> str:
     if v is None:

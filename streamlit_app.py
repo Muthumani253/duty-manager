@@ -106,66 +106,6 @@ def save_csv(df, path):
 def concat_row(df, rowdict):
     return pd.concat([df, pd.DataFrame([rowdict])], ignore_index=True)
 
-# ---------- PREVIEW (staged) STAFF GRID ----------
-def build_preview_staff_df():
-    """
-    Return a staff_df copy that includes staged EXTID selections applied as INSCODE tokens
-    on the chosen staff rows for the corresponding panel row date ranges.
-    This preview is used only for availability/suggestion calculations so staging immediately
-    affects subsequent dropdowns.
-    """
-    base = st.session_state.staff_df.copy()
-    # ensure date columns exist for all staged ranges
-    staged = st.session_state.get("staged_ext", {}) or {}
-    for pidx_str, label in staged.items():
-        try:
-            pidx = int(pidx_str)
-        except Exception:
-            continue
-        if pidx not in st.session_state.panel_df.index:
-            continue
-        prow = st.session_state.panel_df.loc[pidx]
-        ins = str(prow.get("INSCODE","")).strip()
-        d1 = parse_date_flexible(prow.get("DATE_FROM")); d2 = parse_date_flexible(prow.get("DATE_TO"))
-        if not ins or d1 is None or d2 is None or d1 > d2:
-            continue
-        # extract staff id from label (strip emoji if present)
-        lbl = str(label)
-        lbl = lbl.replace("🟢 ","").replace("🟡 ","").replace("🔴 ","")
-        parts = lbl.split("—")
-        if not parts or not parts[0].strip():
-            continue
-        sid = normalize_staff_id(parts[0].strip())
-        if not sid:
-            continue
-        # ensure date columns exist
-        for d in daterange(d1, d2):
-            dc = date_to_str(d)
-            if dc not in base.columns:
-                base[dc] = ""
-        # find or add staff row
-        mask = base["Staff ID"].astype(str).str.upper() == sid.upper()
-        if not mask.any():
-            new = {c:"" for c in base.columns}
-            new["Staff ID"] = sid
-            base = concat_row(base, new)
-            mask = base["Staff ID"].astype(str).str.upper() == sid.upper()
-        sidx = base[mask].index[0]
-        # append the INSCODE token for each date (to simulate being assigned)
-        for d in daterange(d1, d2):
-            dc = date_to_str(d)
-            cur = base.at[sidx, dc] if dc in base.columns else ""
-            cur_s = "" if cur is None else str(cur).strip()
-            if cur_s == "":
-                base.at[sidx, dc] = ins
-            else:
-                # avoid duplicate token
-                toks = split_tokens(cur_s)
-                if ins not in toks:
-                    base.at[sidx, dc] = cur_s + "," + ins
-    return base
-
-
 # ---------- STAFF ID NORMALIZATION ----------
 def normalize_staff_id(v) -> str:
     if v is None:
@@ -443,6 +383,64 @@ def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
                     busy_overlaps.append(f"{date_to_str(bfrom)}->{date_to_str(bto)}")
                     break
     return (len(conflicts) == 0 and len(busy_overlaps) == 0, sorted(conflicts), sorted(set(busy_overlaps)))
+
+# ---------- PREVIEW (staged) STAFF GRID ----------
+def build_preview_staff_df():
+    """
+    Return a staff_df copy that includes staged EXTID selections applied as INSCODE tokens
+    on the chosen staff rows for the corresponding panel row date ranges.
+    This preview is used only for availability/suggestion calculations so staging immediately
+    affects subsequent dropdowns.
+    """
+    base = st.session_state.staff_df.copy()
+    # ensure date columns exist for all staged ranges
+    staged = st.session_state.get("staged_ext", {}) or {}
+    for pidx_str, label in staged.items():
+        try:
+            pidx = int(pidx_str)
+        except Exception:
+            continue
+        if pidx not in st.session_state.panel_df.index:
+            continue
+        prow = st.session_state.panel_df.loc[pidx]
+        ins = str(prow.get("INSCODE","")).strip()
+        d1 = parse_date_flexible(prow.get("DATE_FROM")); d2 = parse_date_flexible(prow.get("DATE_TO"))
+        if not ins or d1 is None or d2 is None or d1 > d2:
+            continue
+        # extract staff id from label (strip emoji if present)
+        lbl = str(label)
+        lbl = lbl.replace("🟢 ","").replace("🟡 ","").replace("🔴 ","")
+        parts = lbl.split("—")
+        if not parts or not parts[0].strip():
+            continue
+        sid = normalize_staff_id(parts[0].strip())
+        if not sid:
+            continue
+        # ensure date columns exist
+        for d in daterange(d1, d2):
+            dc = date_to_str(d)
+            if dc not in base.columns:
+                base[dc] = ""
+        # find or add staff row
+        mask = base["Staff ID"].astype(str).str.upper() == sid.upper()
+        if not mask.any():
+            new = {c:"" for c in base.columns}
+            new["Staff ID"] = sid
+            base = concat_row(base, new)
+            mask = base["Staff ID"].astype(str).str.upper() == sid.upper()
+        sidx = base[mask].index[0]
+        # append the INSCODE token for each date (to simulate being assigned)
+        for d in daterange(d1, d2):
+            dc = date_to_str(d)
+            cur = base.at[sidx, dc] if dc in base.columns else ""
+            cur_s = "" if cur is None else str(cur).strip()
+            if cur_s == "":
+                base.at[sidx, dc] = ins
+            else:
+                toks = split_tokens(cur_s)
+                if ins not in toks:
+                    base.at[sidx, dc] = cur_s + "," + ins
+    return base
 
 # ---------- UI ----------
 st.title("🗂️ Duty Manager")
@@ -1124,9 +1122,11 @@ elif page == "EXTID Allocate":
     st.metric("Rows needing EXTID (visible)", len(candidates))
     st.metric("Staff rows", len(st.session_state.staff_df))
 
-    # Prepare staff_rows with designation and other meta
+    # Build a preview staff grid that includes staged selections (so staging affects availability immediately)
+    preview_staff = build_preview_staff_df()
+    # Prepare staff_rows with designation and other meta (from preview)
     staff_rows = []
-    for _, s in st.session_state.staff_df.iterrows():
+    for _, s in preview_staff.iterrows():
         sid_norm = normalize_staff_id(s.get("Staff ID"))
         if not sid_norm:
             continue
@@ -1137,10 +1137,10 @@ elif page == "EXTID Allocate":
             "name": s.get("Name of the Staff",""),
             "designation": s.get("Designation","")
         })
+    # Compute stats also from preview so staged tokens count as duties/conflicts
+    staff_stats = compute_staff_duty_stats(preview_staff)
 
-    staff_stats = compute_staff_duty_stats(st.session_state.staff_df)
-
-    # Build busy records dict list for quick lookup
+    # Build busy records dict list for quick lookup (unchanged, busy records are authoritative)
     busy_list = []
     for _, b in st.session_state.busy_df.iterrows():
         busy_list.append({"Staff ID": normalize_staff_id(b.get("Staff ID")), "DATE_FROM": b.get("DATE_FROM"), "DATE_TO": b.get("DATE_TO"), "NOTE": b.get("NOTE","")})
@@ -1260,14 +1260,33 @@ elif page == "EXTID Allocate":
                 persist_panel()
             return (False, f"Cannot apply EXTID {staff_id_only_norm}: busy on {', '.join(busy_conflicts)} (Busy record).")
 
-        # Check availability via tokens (non-B)
+        # Check availability via tokens (non-B) - NEW RULE: allow up to 2 occurrences,
+        # but second occurrence allowed only if same INSCODE as being applied.
         busy_found = []
         for d in daterange(d1, d2):
             dc = date_to_str(d)
             val = staff2.at[sidx, dc] if dc in staff2.columns else ""
             toks = split_tokens(val)
-            if any(not is_busy_token(t) for t in toks):
+
+            # Count non-B tokens occurrences (count duplicates)
+            non_b_tokens = [t for t in toks if not is_busy_token(t)]
+            count_non_b = len(non_b_tokens)
+
+            # If already 2 or more non-B tokens -> cannot apply (would be 3rd or more)
+            if count_non_b >= 2:
                 busy_found.append(dc)
+                continue
+
+            # If exactly 1 non-B token -> allow only if it equals the INSCODE we're applying
+            if count_non_b == 1:
+                existing_ins = non_b_tokens[0].strip()
+                # allow if same INSCODE (may append duplicate)
+                if existing_ins != ins:
+                    busy_found.append(dc)
+                    continue
+
+            # count_non_b == 0 -> allowed
+
         if busy_found:
             if pidx in st.session_state.panel_df.index:
                 prev = st.session_state.panel_df.at[pidx, "ERROR"]
@@ -1512,14 +1531,30 @@ elif page == "EXTID Allocate":
                         staff_map[ext_norm] = staff2.index.max()
                     sidx = staff_map[ext_norm]
                     cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
-                    if split_tokens(cur):
-                        fails.append({"panel_index": idx, "staff": ext_norm, "date": dc, "reason":"busy"})
+
+                    # NEW RULE: allow up to 2 non-B tokens; second allowed only if same INSCODE
+                    toks = split_tokens(cur)
+                    non_b_tokens = [t for t in toks if not is_busy_token(t)]
+                    count_non_b = len(non_b_tokens)
+
+                    # If adding ext_norm would create 3rd or more non-B token -> fail
+                    if count_non_b >= 2:
+                        fails.append({"panel_index": idx, "staff": ext_norm, "date": dc, "reason":"busy_max_tokens"})
+                        continue
+
+                    # If exactly 1 non-B token -> allow only if same INSCODE already present
+                    if count_non_b == 1:
+                        existing_ins = non_b_tokens[0].strip()
+                        if existing_ins != ins:
+                            fails.append({"panel_index": idx, "staff": ext_norm, "date": dc, "reason":"busy_conflict_different_inscode"})
+                            continue
+
+                    # otherwise safe — append the INSCODE token
+                    if cur is None or str(cur).strip()=="":
+                        staff2.at[sidx, dc] = ins
                     else:
-                        if cur is None or str(cur).strip()=="":
-                            staff2.at[sidx, dc] = ins
-                        else:
-                            staff2.at[sidx, dc] = str(cur).strip() + "," + ins
-                        commits += 1
+                        staff2.at[sidx, dc] = str(cur).strip() + "," + ins
+                    commits += 1
             st.session_state.staff_df = staff2.copy()
             persist_staff()
             st.success(f"Committed {commits} appended duties.")

@@ -3,8 +3,8 @@
 """
 Duty Manager - Full application
 - Panel authoritative; live Duty Mark view
-- Busy dropdown shows "StaffID — Name"
-- EXTID suggestions & manual include Designation in label
+- EXTID suggestions & manual list show busy/duty in red and workshop instructors in yellow.
+- By default busy/duty/workshop candidates are not selectable. Global override checkbox allows forcing assignment.
 Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR
 """
 from __future__ import annotations
@@ -365,10 +365,7 @@ def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
     busy_overlaps = []
     if busy_records is not None:
         sid = stats_entry.get("name")  # not used here
-        # busy_records: rows with Staff ID, DATE_FROM, DATE_TO
         for br in busy_records:
-            # br: dict with Staff ID, DATE_FROM, DATE_TO, NOTE
-            # if any req_date in br interval -> overlap
             bfrom = parse_date_flexible(br.get("DATE_FROM"))
             bto = parse_date_flexible(br.get("DATE_TO"))
             if bfrom is None or bto is None:
@@ -379,6 +376,17 @@ def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
                     busy_overlaps.append(f"{date_to_str(bfrom)}->{date_to_str(bto)}")
                     break
     return (len(conflicts) == 0 and len(busy_overlaps) == 0, sorted(conflicts), sorted(set(busy_overlaps)))
+
+def is_workshop_designation(designation: str) -> bool:
+    """Detect workshop instructor-like designations (case-insensitive substrings)"""
+    if designation is None:
+        return False
+    s = str(designation).lower()
+    keywords = ["workshop", "instructor", "lab instructor", "lab-instructor", "trainer", "work shop", "work-shop", "tech instr", "technician"]
+    for k in keywords:
+        if k in s:
+            return True
+    return False
 
 # ---------- UI ----------
 st.title("🗂️ Duty Manager")
@@ -988,18 +996,21 @@ elif page == "Duty Mark":
 # ------------------- EXTID Allocate -------------------
 elif page == "EXTID Allocate":
     st.header("🧾 EXTID Allocate — assign externals")
-    st.info("Filter by INSCODE and Department. Suggestions show free staff (same dept & different INSCODE). Apply will persist to Panel and Staff data.")
+    st.info("Filter by INSCODE and Department. Suggestions show staff status (free/duty/busy/workshop). By default busy/duty/workshop candidates are blocked from selection. Toggle override to force assign (not recommended).")
 
     # authoritative panel
     panel = st.session_state.panel_df.copy()
     staff = st.session_state.staff_df.copy()
     submap = st.session_state.submap.copy()
-    busy_records = st.session_state.busy_df.copy()
+    busy_records_df = st.session_state.busy_df.copy()
 
     ins_opts3 = ["All"] + sorted([x for x in panel["INSCODE"].unique() if str(x).strip()!=""])
     ins_sel3 = st.selectbox("INSCODE (All)", ins_opts3, index=0)
     dept_opts3 = ["All"] + sorted([x for x in panel["NCNO"].unique() if str(x).strip()!=""])
     dept_sel3 = st.selectbox("Department / NCNO (All)", dept_opts3, index=0)
+
+    # global override toggle (allows selecting busy/workshop)
+    override_allow = st.checkbox("Allow override (enable selecting busy/workshop candidates)", value=False, help="When checked, EXTID assignment may forcibly assign a busy or workshop instructor. Use with caution.")
 
     def get_subname(subcode):
         if submap is None or submap.empty:
@@ -1066,41 +1077,46 @@ elif page == "EXTID Allocate":
             sid = s["Staff ID"]
             stats_entry = staff_stats.get(sid, {"duty_count":0, "date_tokens":{}, "INSTT": s["INSTT"], "dep_code": s["dep code"], "name": s.get("name",""), "designation": s.get("designation","")})
             duty_count = stats_entry.get("duty_count", 0)
-            # check busy records for this staff
             busy_for_staff = [br for br in busy_list if br.get("Staff ID") == sid]
             is_free, conflicts, busy_overlaps = availability_for_req_dates(stats_entry, req_dates, busy_records=busy_for_staff)
-            if not is_free:
-                # if busy overlaps, we treat as not eligible for suggestion by default
-                # but still include, marked as busy or duty
-                status = ""
-                if busy_overlaps:
-                    status = "busy"
-                elif conflicts:
-                    status = "duty:" + ",".join(conflicts)
-                else:
-                    status = "busy"
-            else:
-                status = "free"
+            workshop_flag = is_workshop_designation(s.get("designation",""))
+            # status priority: busy_record > duty token > workshop > free
+            status = "free"
+            blocked = False
+            reason = ""
+            if busy_overlaps:
+                status = "busy"
+                blocked = True
+                reason = ",".join(busy_overlaps)
+            elif conflicts:
+                status = "duty:" + ",".join(conflicts)
+                blocked = True
+                reason = ",".join(conflicts)
+            elif workshop_flag:
+                status = "workshop"
+                blocked = True
+                reason = "workshop designation"
             label = f"{sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {status}"
             candidates_out.append({
                 "staff_id": sid,
                 "label": label,
                 "duty_count": duty_count,
-                "is_free": is_free,
+                "is_free": is_free and (not busy_overlaps),
                 "conflicts": conflicts,
                 "busy_overlaps": busy_overlaps,
                 "INSTT": s.get("INSTT",""),
                 "dep_code": s.get("dep code",""),
                 "name": s.get("name",""),
-                "designation": s.get("designation","")
+                "designation": s.get("designation",""),
+                "workshop": workshop_flag,
+                "blocked": blocked,
+                "block_reason": reason
             })
-        # only include those with is_free True by default in the top suggestions (others can appear if you want)
-        frees = [c for c in candidates_out if c["is_free"]]
         # sort by duty_count then id
-        frees_sorted = sorted(frees, key=lambda x: (x["duty_count"], x["staff_id"]))
-        # append some non-free items (optional) - here we just return frees so suggestions list excludes busy/duty
-        return frees_sorted
+        sorted_all = sorted(candidates_out, key=lambda x: (x["duty_count"], x["staff_id"]))
+        return sorted_all
 
+    # Render candidates: for each panel row show full list with color badges and a selectbox that contains only allowed options (unless override_allow)
     if candidates.empty:
         st.info("No rows require EXTID (for selected filters).")
     else:
@@ -1125,33 +1141,71 @@ elif page == "EXTID Allocate":
             with cols[1]:
                 suggs = suggestions_for_row_with_stats(row)
                 if suggs:
-                    top_preview = ", ".join([f"{s['staff_id']}(free)" for s in suggs[:6]])
-                    st.caption("Top suggestions: " + top_preview)
-                    select_opts = [""] + [s["label"] for s in suggs]
-                    existing_ext = st.session_state.panel_df.at[pidx, "EXTID"] if pidx in st.session_state.panel_df.index else ""
-                    existing_norm = normalize_staff_id(existing_ext)
-                    key_sugg = f"sugg_{pidx}_{existing_norm if existing_norm else ''}"
-                    sel = st.selectbox(f"🔎 Suggestions — {pidx}", options=select_opts, key=key_sugg)
+                    # Display colored candidate list (markdown with inline HTML badges)
+                    html_lines = []
+                    for c in suggs:
+                        badge = ""
+                        style = ""
+                        # red for busy/duty, yellow for workshop, green/neutral for free
+                        if c["blocked"]:
+                            if c["busy_overlaps"]:
+                                # busy
+                                style = "background:#ff9999;color:#000;padding:3px 8px;border-radius:4px;"
+                                badge = f"<span style='{style}'>BUSY</span>"
+                            elif c["conflicts"]:
+                                style = "background:#ff9999;color:#000;padding:3px 8px;border-radius:4px;"
+                                badge = f"<span style='{style}'>DUTY</span>"
+                            elif c["workshop"]:
+                                style = "background:#fff2cc;color:#000;padding:3px 8px;border-radius:4px;"
+                                badge = f"<span style='{style}'>WORKSHOP</span>"
+                            else:
+                                style = "background:#ff9999;color:#000;padding:3px 8px;border-radius:4px;"
+                                badge = f"<span style='{style}'>BLOCKED</span>"
+                        else:
+                            style = "background:#ccffcc;color:#000;padding:3px 8px;border-radius:4px;"
+                            badge = f"<span style='{style}'>FREE</span>"
+                        label_html = c["label"].replace("&","&amp;")
+                        # small reason text
+                        reason = c.get("block_reason","")
+                        reason_html = f" <small style='color:#666'>({reason})</small>" if reason else ""
+                        line = f"<div style='margin-bottom:6px'>{badge} &nbsp; <strong>{label_html}</strong>{reason_html}</div>"
+                        html_lines.append(line)
+                    st.markdown("".join(html_lines), unsafe_allow_html=True)
+                    # build selectbox options: include free ones; include blocked ones only if override_allow True
+                    selectable = []
+                    for c in suggs:
+                        if not c["blocked"] or override_allow:
+                            selectable.append(c["label"])
+                    sel_key = f"sugg_{pidx}_select"
+                    if selectable:
+                        sel = st.selectbox(f"Select candidate to apply (Row {pidx})", options=[""] + selectable, key=sel_key)
+                    else:
+                        sel = ""
+                        st.caption("No selectable candidates (all are busy/duty/workshop). Toggle override to allow forced assignment.")
                 else:
                     sel = ""
                     st.caption("⚠️ No suggestions (free staff from same dept & different institute)")
             with cols[2]:
+                # manual list: show full list with color badges same as suggestions; selection limited by override
                 d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
                 req_dates = [date_to_str(d) for d in daterange(d1, d2)] if (d1 and d2) else []
-                # manual list includes designation
-                man_list = [""]
-                for s in staff_rows:
-                    sid = s["Staff ID"]
-                    stats_entry = staff_stats.get(sid, {"duty_count":0, "date_tokens":{}, "INSTT": s["INSTT"], "dep_code": s["dep code"], "name": s.get("name",""), "designation": s.get("designation","")})
-                    duty_count = stats_entry.get("duty_count", 0)
-                    is_free, conflicts, busy_overlaps = availability_for_req_dates(stats_entry, req_dates, busy_records=[br for br in busy_list if br["Staff ID"]==sid])
-                    avail_label = "free" if is_free else ("duty:" + ",".join(conflicts) if conflicts else ("busy" if busy_overlaps else "busy"))
-                    label = f"{sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {avail_label}"
-                    man_list.append(label)
-                existing_ext = st.session_state.panel_df.at[pidx, "EXTID"] if pidx in st.session_state.panel_df.index else ""
-                existing_norm2 = normalize_staff_id(existing_ext)
-                key_man = f"man_{pidx}_{existing_norm2 if existing_norm2 else ''}"
-                man = st.selectbox(f"✍️ Manual — {pidx}", options=man_list, key=key_man)
+                man_list_full = []
+                for c in suggestions_for_row_with_stats(row):
+                    # same label as earlier
+                    man_list_full.append(c)
+                # display small legend
+                st.markdown("<small>Legend: <span style='background:#ff9999;padding:3px 6px;border-radius:4px;'>RED = busy/duty (blocked)</span>  <span style='background:#fff2cc;padding:3px 6px;border-radius:4px;'>YELLOW = workshop (blocked)</span>  <span style='background:#ccffcc;padding:3px 6px;border-radius:4px;'>GREEN = free (selectable)</span></small>", unsafe_allow_html=True)
+                # build manual options only from man_list_full: include only non-blocked or if override_allow include all
+                manual_options = []
+                for c in man_list_full:
+                    if not c["blocked"] or override_allow:
+                        manual_options.append(c["label"])
+                man_key = f"man_{pidx}_select"
+                if manual_options:
+                    manual_sel = st.selectbox(f"Manual staff (Row {pidx})", options=[""] + manual_options, key=man_key)
+                else:
+                    manual_sel = ""
+                    st.caption("No manual selectable staff (all blocked). Toggle override to force select.")
             with cols[3]:
                 staged = st.session_state.panel_df.at[pidx,"EXTID"] if pidx in st.session_state.panel_df.index else ""
                 if staged and str(staged).strip() != "" and not is_zero_like(staged):
@@ -1161,10 +1215,11 @@ elif page == "EXTID Allocate":
             with cols[4]:
                 if st.button("Apply", key=f"apply_{pidx}"):
                     chosen_label = ""
-                    if sel and str(sel).strip() != "":
+                    # prefer sel from suggestions selectbox, else manual_sel
+                    if 'sel' in locals() and sel and str(sel).strip() != "":
                         chosen_label = sel
-                    elif man and str(man).strip() != "":
-                        chosen_label = man
+                    elif 'manual_sel' in locals() and manual_sel and str(manual_sel).strip() != "":
+                        chosen_label = manual_sel
                     else:
                         st.warning("Choose suggestion or manual staff.")
                         continue
@@ -1179,6 +1234,18 @@ elif page == "EXTID Allocate":
                     if not staff_id_only_norm:
                         st.error("Selected staff ID is invalid (0 or blank). Please choose a valid staff.")
                         continue
+
+                    # find the candidate entry to check blocked status
+                    cand_list = suggestions_for_row_with_stats(row)
+                    chosen_entry = None
+                    for c in cand_list:
+                        if c["staff_id"] == staff_id_only_norm:
+                            chosen_entry = c
+                            break
+                    if chosen_entry is not None:
+                        if chosen_entry["blocked"] and (not override_allow):
+                            st.error("Selected staff is blocked (busy/duty/workshop). Enable override to force assignment.")
+                            continue
 
                     ins = str(row.get("INSCODE","")).strip()
                     d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
@@ -1216,8 +1283,8 @@ elif page == "EXTID Allocate":
                                 if bfrom <= d <= bto:
                                     busy_conflicts.append(f"{date_to_str(bfrom)}->{date_to_str(bto)}")
                                     break
-                    if busy_conflicts:
-                        st.error(f"Cannot apply EXTID {staff_id_only_norm}: busy on {', '.join(busy_conflicts)} (Busy record).")
+                    if busy_conflicts and (not override_allow):
+                        st.error(f"Cannot apply EXTID {staff_id_only_norm}: busy on {', '.join(busy_conflicts)} (Busy record). Enable override to force.")
                         if pidx in st.session_state.panel_df.index:
                             prev = st.session_state.panel_df.at[pidx, "ERROR"]
                             newerr = (str(prev) + "; " if str(prev).strip() else "") + f"EXT apply failed busy_rec:{','.join(busy_conflicts)}"
@@ -1233,8 +1300,8 @@ elif page == "EXTID Allocate":
                         toks = split_tokens(val)
                         if any(not is_busy_token(t) for t in toks):
                             busy_found.append(dc)
-                    if busy_found:
-                        st.error(f"Cannot apply EXTID {staff_id_only_norm}: already has duty token(s) on {', '.join(busy_found)}")
+                    if busy_found and (not override_allow):
+                        st.error(f"Cannot apply EXTID {staff_id_only_norm}: already has duty token(s) on {', '.join(busy_found)}. Enable override to force.")
                         if pidx in st.session_state.panel_df.index:
                             prev = st.session_state.panel_df.at[pidx, "ERROR"]
                             newerr = (str(prev) + "; " if str(prev).strip() else "") + f"EXT apply failed busy_tok:{','.join(busy_found)}"

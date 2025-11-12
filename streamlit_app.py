@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # streamlit_app.py
 """
-Duty Manager - Full application (modified manual dropdown to show ALL staff with coloured label)
+Duty Manager - Full application
+Minor update: data_version + cache-keying so availability / duty-count reflects instantly after writes.
 Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR
 """
 from __future__ import annotations
@@ -259,25 +260,37 @@ if "busy_df" not in st.session_state:
 if "audit" not in st.session_state:
     st.session_state.audit = []
 
-# ---------- PERSISTENCE ----------
+# NEW: version token to force cache invalidation when data changes
+if "data_version" not in st.session_state:
+    st.session_state["data_version"] = 0
+
+# ---------- PERSISTENCE (now bump data_version on success) ----------
 def persist_panel():
     st.session_state.panel_df = ensure_rowid(st.session_state.panel_df, prefix="p")
     ok = save_csv(st.session_state.panel_df, PANEL_PATH)
+    if ok:
+        st.session_state["data_version"] = st.session_state.get("data_version", 0) + 1
     return ok
 
 def persist_staff():
     st.session_state.staff_df = ensure_rowid(st.session_state.staff_df, prefix="s")
     ok = save_csv(st.session_state.staff_df, STAFF_PATH)
+    if ok:
+        st.session_state["data_version"] = st.session_state.get("data_version", 0) + 1
     return ok
 
 def persist_submap():
     st.session_state.submap = st.session_state.submap.fillna("")
     ok = save_csv(st.session_state.submap, SUBMAP_PATH)
+    if ok:
+        st.session_state["data_version"] = st.session_state.get("data_version", 0) + 1
     return ok
 
 def persist_busy():
     st.session_state.busy_df = ensure_rowid(st.session_state.busy_df, prefix="b")
     ok = save_csv(st.session_state.busy_df, BUSY_PATH)
+    if ok:
+        st.session_state["data_version"] = st.session_state.get("data_version", 0) + 1
     return ok
 
 def apply_busy_to_staff_cells(staff_df, staff_id, dfrom, dto, busy_token="B"):
@@ -322,7 +335,10 @@ def remove_busy_from_staff_cells(staff_df, staff_id, dfrom, dto):
 
 # ---------- Staff stats (cached for speed) ----------
 @st.cache_data(ttl=120)
-def compute_staff_duty_stats_cached(staff_df_serialized: str):
+def compute_staff_duty_stats_cached(staff_df_serialized: str, data_version: int):
+    """
+    NOTE: data_version is part of cache key; bump it when authoritative data changes.
+    """
     staff_df = pd.read_csv(pd.io.common.StringIO(staff_df_serialized), dtype=object).fillna("")
     stats = {}
     if staff_df is None or staff_df.empty:
@@ -347,7 +363,7 @@ def compute_staff_duty_stats_cached(staff_df_serialized: str):
 
 def compute_staff_duty_stats(staff_df: pd.DataFrame):
     csvtext = staff_df.to_csv(index=False)
-    return compute_staff_duty_stats_cached(csvtext)
+    return compute_staff_duty_stats_cached(csvtext, st.session_state.get("data_version", 0))
 
 def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
     if stats_entry is None:
@@ -431,7 +447,10 @@ if page == "Panel Upload":
                             if ins and d1 and d2 and d1 <= d2:
                                 staff = remove_inscode_from_staff_cells(staff, ins, d1, d2)
                         st.session_state.staff_df = staff.copy()
-                        persist_staff()
+                        if persist_staff():
+                            st.success("Cleared old staff marks.")
+                        else:
+                            st.warning("Failed to persist staff after clearing marks.")
                         backend = tmp.reset_index(drop=True)
                         backend = ensure_rowid(backend, prefix="p")
                         st.session_state.panel_df = backend.copy()
@@ -449,7 +468,10 @@ if page == "Panel Upload":
                                 if d1 and d2 and d1 <= d2:
                                     staff = remove_inscode_from_staff_cells(staff, ins, d1, d2)
                         st.session_state.staff_df = staff.copy()
-                        persist_staff()
+                        if persist_staff():
+                            st.success("Cleared previous INSCODE tokens for these INSCODE(s) from staff")
+                        else:
+                            st.warning("Failed to persist staff after clearing tokens")
                         for ins in ins_in_upload:
                             backend = backend[backend["INSCODE"].astype(str).str.strip() != str(ins)]
                         backend = pd.concat([backend.reset_index(drop=True), tmp.reset_index(drop=True)], ignore_index=True)
@@ -512,6 +534,7 @@ if page == "Panel Upload":
                 backend = st.session_state.panel_df.copy()
                 backend_idx = backend.set_index("__rowid", drop=False)
                 edited_idx = to_save.set_index("__rowid", drop=False)
+
                 # detect deletions -> remove corresponding INSCODE tokens from staff
                 to_drop = [rid for rid in backend_idx.index if rid not in edited_idx.index]
                 if to_drop:
@@ -523,18 +546,24 @@ if page == "Panel Upload":
                         if ins and d1 and d2 and d1 <= d2:
                             staff = remove_inscode_from_staff_cells(staff, ins, d1, d2)
                     st.session_state.staff_df = staff.copy()
-                    persist_staff()
+                    if persist_staff():
+                        st.success("Removed INSCODE tokens for deleted panel rows.")
+                    else:
+                        st.warning("Failed to persist staff after deletion cleanup.")
                     backend_idx = backend_idx.drop(index=to_drop, errors="ignore")
+
                 # update existing rows
                 common = backend_idx.index.intersection(edited_idx.index)
                 for rid in common:
                     for c in edited_idx.columns:
                         backend_idx.at[rid, c] = edited_idx.at[rid, c]
+
                 # append new rows
                 new_ids = [rid for rid in edited_idx.index if rid not in backend_idx.index]
                 if new_ids:
                     to_append = edited_idx.loc[new_ids].reset_index(drop=True)
                     backend_idx = pd.concat([backend_idx.reset_index(drop=True), to_append.reset_index(drop=True)], ignore_index=True)
+
                 backend_final = ensure_rowid(backend_idx.reset_index(drop=True), prefix="p")
                 if "ERROR" not in backend_final.columns:
                     backend_final["ERROR"] = ""
@@ -561,7 +590,10 @@ if page == "Panel Upload":
                     if ins and d1 and d2 and d1 <= d2:
                         staff = remove_inscode_from_staff_cells(staff, ins, d1, d2)
                 st.session_state.staff_df = staff.copy()
-                persist_staff()
+                if persist_staff():
+                    st.success("Cleared staff tokens.")
+                else:
+                    st.warning("Failed to persist staff after clearing.")
                 st.session_state.panel_df = ensure_rowid(pd.DataFrame(columns=PANEL_COLS), prefix="p")
                 if persist_panel():
                     st.success("All panel data cleared and previous staff marks removed.")
@@ -699,7 +731,9 @@ elif page == "Duty Mark":
                 for idx in filt.index:
                     if idx in st.session_state.panel_df.index:
                         st.session_state.panel_df.at[idx, "ERROR"] = ""
-                persist_panel()
+                if persist_panel():
+                    pass
+
                 staff = st.session_state.staff_df.copy()
                 for _, r in filt.iterrows():
                     ins = str(r.get("INSCODE","")).strip()
@@ -707,7 +741,9 @@ elif page == "Duty Mark":
                     if ins and d1 and d2 and d1 <= d2:
                         staff = remove_inscode_from_staff_cells(staff, ins, d1, d2)
                 st.session_state.staff_df = staff.copy()
-                persist_staff()
+                if persist_staff():
+                    pass
+
                 dates = set()
                 for _, r in filt.iterrows():
                     d1 = parse_date_flexible(r.get("DATE_FROM")); d2 = parse_date_flexible(r.get("DATE_TO"))
@@ -719,14 +755,17 @@ elif page == "Duty Mark":
                     if dc not in st.session_state.staff_df.columns:
                         st.session_state.staff_df[dc] = ""
                 staff = st.session_state.staff_df.copy()
+
                 staff_map = {}
                 for idx_s, r in staff.iterrows():
                     sid_norm = normalize_staff_id(r.get("Staff ID"))
                     if sid_norm:
                         staff_map[sid_norm] = idx_s
+
                 audit = []
                 error_panel_rows = {}
                 total_attempts = total_appends = total_errors = 0
+
                 for idx, r in filt.iterrows():
                     d1 = parse_date_flexible(r.get("DATE_FROM")); d2 = parse_date_flexible(r.get("DATE_TO"))
                     if d1 is None or d2 is None or d1 > d2:
@@ -758,6 +797,7 @@ elif page == "Duty Mark":
                             total_errors += 1
                             error_panel_rows.setdefault(idx, set()).add("INTID empty")
                             audit.append({"allocation_row_index": idx, "date_iso": dc, "role":"I","staff_id": "", "applied":False, "sheet2_before":None, "sheet2_after":None, "timestamp":_now(), "error":"INTID empty"})
+
                         extid_raw = r.get("EXTID","")
                         extid_norm = normalize_staff_id(extid_raw)
                         if is_zero_like(extid_raw):
@@ -776,17 +816,26 @@ elif page == "Duty Mark":
                                 audit.append({"allocation_row_index": idx, "date_iso": dc, "role":"E","staff_id": extid_norm, "applied":True, "sheet2_before": before, "sheet2_after": after, "timestamp":_now()})
                         else:
                             audit.append({"allocation_row_index": idx, "date_iso": dc, "role":"E","staff_id": "", "applied":False, "sheet2_before":None, "sheet2_after":None, "timestamp":_now()})
+
                 if error_panel_rows:
                     for pidx, reasons in error_panel_rows.items():
                         val = "; ".join(sorted(reasons))
                         if pidx in st.session_state.panel_df.index:
                             st.session_state.panel_df.at[pidx, "ERROR"] = val
-                    persist_panel()
+                    if persist_panel():
+                        pass
+
                 st.session_state.staff_df = staff.copy()
                 st.session_state.audit = audit.copy()
-                persist_staff()
+                if persist_staff():
+                    pass
+
+                # recompute cached stats now (data_version bumped by persist calls)
+                _ = compute_staff_duty_stats(st.session_state.staff_df)
+
                 st.success("Generate pass completed.")
                 st.write(f"Attempts: {total_attempts}  |  Appends: {total_appends}  |  Errors: {total_errors}")
+
                 if error_panel_rows:
                     err_list = []
                     for pidx, reasons in error_panel_rows.items():
@@ -798,6 +847,7 @@ elif page == "Duty Mark":
                     st.dataframe(pd.DataFrame(err_list).fillna(""), height=300)
                 else:
                     st.info("No panel-level errors detected.")
+
                 if audit:
                     st.markdown("### Audit (recent events)")
                     st.dataframe(pd.DataFrame(audit).fillna("").head(500))
@@ -839,10 +889,16 @@ elif page == "Duty Mark":
                         else:
                             new = {"Staff ID": staff_id_selected, "DATE_FROM": date_to_str(busy_from), "DATE_TO": date_to_str(busy_to), "NOTE": note, "__rowid": ""}
                             st.session_state.busy_df = concat_row(st.session_state.busy_df, new)
-                            persist_busy()
-                            st.session_state.staff_df = apply_busy_to_staff_cells(st.session_state.staff_df, staff_id_selected, busy_from, busy_to, busy_token="B")
-                            persist_staff()
-                            st.success(f"Busy added for {staff_id_selected} from {date_to_str(busy_from)} to {date_to_str(busy_to)} and applied to staff cells.")
+                            if persist_busy():
+                                st.session_state.staff_df = apply_busy_to_staff_cells(st.session_state.staff_df, staff_id_selected, busy_from, busy_to, busy_token="B")
+                                if persist_staff():
+                                    # recompute stats after busy apply
+                                    _ = compute_staff_duty_stats(st.session_state.staff_df)
+                                    st.success(f"Busy added for {staff_id_selected} from {date_to_str(busy_from)} to {date_to_str(busy_to)} and applied to staff cells.")
+                                else:
+                                    st.warning("Failed to persist staff after busy apply.")
+                            else:
+                                st.error("Failed to persist busy record.")
 
         st.markdown("### Existing busy records (edit / delete)")
         busy_df = st.session_state.busy_df.copy()
@@ -858,10 +914,15 @@ elif page == "Duty Mark":
                     sd = parse_date_flexible(rec["DATE_FROM"]); ed = parse_date_flexible(rec["DATE_TO"])
                     sid = rec["Staff ID"]
                     st.session_state.busy_df = busy_df.drop(busy_df.index[int(del_idx)]).reset_index(drop=True)
-                    persist_busy()
-                    st.session_state.staff_df = remove_busy_from_staff_cells(st.session_state.staff_df, sid, sd, ed)
-                    persist_staff()
-                    st.success(f"Deleted busy record for {sid} {date_to_str(sd)}->{date_to_str(ed)} and removed B tokens from staff cells.")
+                    if persist_busy():
+                        st.session_state.staff_df = remove_busy_from_staff_cells(st.session_state.staff_df, sid, sd, ed)
+                        if persist_staff():
+                            _ = compute_staff_duty_stats(st.session_state.staff_df)
+                            st.success(f"Deleted busy record for {sid} {date_to_str(sd)}->{date_to_str(ed)} and removed B tokens from staff cells.")
+                        else:
+                            st.warning("Failed to persist staff after busy delete.")
+                    else:
+                        st.error("Failed to persist busy deletion.")
                 except Exception as e:
                     st.error("Delete failed: " + str(e))
 
@@ -1024,7 +1085,6 @@ elif page == "EXTID Allocate":
         busy_list.append({"Staff ID": normalize_staff_id(b.get("Staff ID")), "DATE_FROM": b.get("DATE_FROM"), "DATE_TO": b.get("DATE_TO"), "NOTE": b.get("NOTE","")})
 
     def build_candidate_entries_for_row(row):
-        # suggestions: filtered (different instt, same dept) - same as previous behavior
         ins = str(row.get("INSCODE","")).strip()
         dept = str(row.get("NCNO","")).strip()
         d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
@@ -1078,7 +1138,6 @@ elif page == "EXTID Allocate":
         return sorted(out, key=lambda x: (x["duty_count"], x["staff_id"]))
 
     def build_manual_entries_for_row_allstaff(row):
-        # NEW: manual list includes ALL staff (no filtering by INSTT or dep) but status is computed for the row's dates
         ins = str(row.get("INSCODE","")).strip()
         d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
         if not (d1 and d2):
@@ -1157,7 +1216,6 @@ elif page == "EXTID Allocate":
                     sel = ""
                     st.caption("No suggestions (no eligible staff found for filters).")
             with cols[2]:
-                # MANUAL: show ALL staff with inline emoji/status (fast)
                 man_entries = build_manual_entries_for_row_allstaff(row)
                 if man_entries:
                     manual_options = [""] + [e["label"] for e in man_entries]
@@ -1191,7 +1249,6 @@ elif page == "EXTID Allocate":
                     if not staff_id_only_norm:
                         st.error("Invalid staff id selected.")
                         continue
-                    # find chosen entry among manual entries (since manual now includes all staff)
                     man_entries_current = build_manual_entries_for_row_allstaff(row)
                     chosen_entry = next((e for e in man_entries_current if e["staff_id"] == staff_id_only_norm), None)
                     if chosen_entry is not None and chosen_entry["blocked"] and (not override_allow):
@@ -1283,9 +1340,13 @@ elif page == "EXTID Allocate":
                         if prev_err and "EXT apply failed" in prev_err:
                             parts = [pt for pt in str(prev_err).split(";") if "EXT apply failed" not in pt]
                             st.session_state.panel_df.at[pidx, "ERROR"] = ";".join([p.strip() for p in parts if p.strip()!=""])
-                        persist_panel()
+                        if persist_panel():
+                            pass
                     st.session_state.staff_df = staff2.copy()
-                    persist_staff()
+                    if persist_staff():
+                        # recompute staff stats so next rendering shows updated duty counts
+                        _ = compute_staff_duty_stats(st.session_state.staff_df)
+                    persist_staff()  # double persist safe; ensures data_version bump
                     st.success(f"✅ Applied EXTID {staff_id_only_norm} and saved. INSCODE {ins} marked for {date_to_str(d1)} → {date_to_str(d2)}")
 
         st.markdown("---")
@@ -1327,7 +1388,8 @@ elif page == "EXTID Allocate":
                             staff2.at[sidx, dc] = str(cur).strip() + "," + ins
                         commits += 1
             st.session_state.staff_df = staff2.copy()
-            persist_staff()
+            if persist_staff():
+                _ = compute_staff_duty_stats(st.session_state.staff_df)
             st.success(f"Committed {commits} appended duties.")
             if fails:
                 st.error(f"{len(fails)} commits failed (invalid ids or busy).")

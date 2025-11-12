@@ -353,26 +353,32 @@ def compute_staff_duty_stats(staff_df: pd.DataFrame):
 def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
     """
     Return (is_free_bool, conflicts_list, busy_overlap_list)
-    conflicts_list: list of INSCODE tokens that are non-B on those dates
-    busy_overlap_list: list of busy intervals that overlap
+
+    New rule: A staff is considered 'free' for the requested dates ONLY IF
+    - all the corresponding date cells are empty (no tokens at all, including 'B'), AND
+    - there are no busy_records that overlap any of the requested dates.
+
+    conflicts_list: list of tokens found on the requested dates (can include 'B' or INSCODE tokens)
+    busy_overlap_list: list of busy intervals that overlap (formatted "dd.mm.YYYY->dd.mm.YYYY")
     """
     if stats_entry is None:
-        return (True, [], [])
-    date_tokens = stats_entry.get("date_tokens", {})
+        # no data -> treat as free if there are no busy_records
+        if not busy_records:
+            return (True, [], [])
+        # if busy_records present, check overlaps below
+    date_tokens = stats_entry.get("date_tokens", {}) if stats_entry is not None else {}
     conflicts = []
+    # If any token (including B) exists on any required date, that's a conflict => not free
     for dc in req_dates:
         toks = date_tokens.get(dc, []) if date_tokens is not None else []
-        for t in toks:
-            if not is_busy_token(t):
+        if toks:
+            # record the tokens found (for diagnostics); include all tokens
+            for t in toks:
                 if t and t not in conflicts:
                     conflicts.append(t)
     busy_overlaps = []
     if busy_records is not None:
-        sid = stats_entry.get("name")  # not used here
-        # busy_records: rows with Staff ID, DATE_FROM, DATE_TO
         for br in busy_records:
-            # br: dict with Staff ID, DATE_FROM, DATE_TO, NOTE
-            # if any req_date in br interval -> overlap
             bfrom = parse_date_flexible(br.get("DATE_FROM"))
             bto = parse_date_flexible(br.get("DATE_TO"))
             if bfrom is None or bto is None:
@@ -382,7 +388,9 @@ def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
                 if d and (bfrom <= d <= bto):
                     busy_overlaps.append(f"{date_to_str(bfrom)}->{date_to_str(bto)}")
                     break
-    return (len(conflicts) == 0 and len(busy_overlaps) == 0, sorted(conflicts), sorted(set(busy_overlaps)))
+    # free only if no tokens on dates AND no busy overlaps
+    is_free = (len(conflicts) == 0) and (len(busy_overlaps) == 0)
+    return (is_free, sorted(conflicts), sorted(set(busy_overlaps)))
 
 # ---------- PREVIEW (staged) STAFF GRID ----------
 def build_preview_staff_df():

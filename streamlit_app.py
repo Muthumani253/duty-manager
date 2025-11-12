@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 # streamlit_app.py
 """
-Duty Manager - Full application with Auto-Allocate page
+Duty Manager - Full application
 - Panel authoritative; live Duty Mark view
 - Busy dropdown shows "StaffID — Name"
 - EXTID suggestions & manual include Designation in label
-- New: Auto Allocate page which pre-selects top free staff for rows needing EXTID,
-       allows review/edit, and bulk-apply with undo and save.
 Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR
 """
 from __future__ import annotations
@@ -15,7 +13,6 @@ import uuid
 import traceback
 from datetime import datetime, timedelta, date
 import re
-from typing import Dict, List, Tuple, Any, Set
 
 import streamlit as st
 import pandas as pd
@@ -265,16 +262,6 @@ if "busy_df" not in st.session_state:
 if "audit" not in st.session_state:
     st.session_state.audit = []
 
-# Auto-allocate session state
-if "autoalloc_selection" not in st.session_state:
-    # mapping panel_index -> chosen staff_id (normalized)
-    st.session_state.autoalloc_selection = {}  # Dict[int, str]
-if "autoalloc_reserved" not in st.session_state:
-    # mapping date_str -> set(staff_id)
-    st.session_state.autoalloc_reserved = {}  # Dict[str, Set[str]]
-if "autoalloc_undo_stack" not in st.session_state:
-    st.session_state.autoalloc_undo_stack = []  # list of snapshots
-
 # ---------- PERSISTENCE ----------
 def persist_panel():
     st.session_state.panel_df = ensure_rowid(st.session_state.panel_df, prefix="p")
@@ -377,8 +364,11 @@ def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
                     conflicts.append(t)
     busy_overlaps = []
     if busy_records is not None:
+        sid = stats_entry.get("name")  # not used here
         # busy_records: rows with Staff ID, DATE_FROM, DATE_TO
         for br in busy_records:
+            # br: dict with Staff ID, DATE_FROM, DATE_TO, NOTE
+            # if any req_date in br interval -> overlap
             bfrom = parse_date_flexible(br.get("DATE_FROM"))
             bto = parse_date_flexible(br.get("DATE_TO"))
             if bfrom is None or bto is None:
@@ -390,151 +380,11 @@ def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
                     break
     return (len(conflicts) == 0 and len(busy_overlaps) == 0, sorted(conflicts), sorted(set(busy_overlaps)))
 
-# ---------- Auto-allocate logic ----------
-def auto_select_all_candidates(
-    panel_df: pd.DataFrame,
-    staff_df: pd.DataFrame,
-    busy_df: pd.DataFrame,
-    submap: pd.DataFrame,
-    ins_filter: str = None,
-    ncno_filter: str = None,
-    reserve: bool = True,
-    dont_touch_existing_extid: bool = True,
-    force_allow: bool = False,
-    top_k: int = 5
-) -> Tuple[Dict[int, str], Dict[str, Set[str]], Dict[int, str]]:
-    """
-    Returns (selection_map, reserved_map, reason_map)
-    - selection_map: panel_index -> staff_id (normalized) selected (empty string means no selection)
-    - reserved_map: date_str -> set of staff_id reserved (for in-session reservation)
-    - reason_map: panel_index -> reason string if not selected
-    """
-    selection: Dict[int, str] = {}
-    reserved: Dict[str, Set[str]] = {}
-    reason_map: Dict[int, str] = {}
-
-    # prepare staff rows and stats
-    staff_rows = []
-    for _, s in staff_df.iterrows():
-        sid_norm = normalize_staff_id(s.get("Staff ID"))
-        if not sid_norm:
-            continue
-        staff_rows.append({
-            "Staff ID": sid_norm,
-            "INSTT": s.get("INSTT",""),
-            "dep code": s.get("dep code",""),
-            "name": s.get("Name of the Staff",""),
-            "designation": s.get("Designation","")
-        })
-    staff_stats = compute_staff_duty_stats(staff_df)
-
-    busy_list = []
-    for _, b in busy_df.iterrows():
-        busy_list.append({"Staff ID": normalize_staff_id(b.get("Staff ID")), "DATE_FROM": b.get("DATE_FROM"), "DATE_TO": b.get("DATE_TO"), "NOTE": b.get("NOTE","")})
-
-    # filter candidate panel rows (need EXTID)
-    def needs_ext(r):
-        intid = str(r.get("INTID","")).strip()
-        extid_raw = r.get("EXTID","")
-        ext_empty = (str(extid_raw).strip() == "") or is_zero_like(extid_raw)
-        d1 = parse_date_flexible(r.get("DATE_FROM")); d2 = parse_date_flexible(r.get("DATE_TO"))
-        return intid != "" and ext_empty and (d1 is not None and d2 is not None and d1 <= d2)
-
-    candidates = panel_df[panel_df.apply(needs_ext, axis=1)].copy()
-    if ins_filter:
-        candidates = candidates[candidates["INSCODE"].astype(str) == str(ins_filter)]
-    if ncno_filter:
-        candidates = candidates[candidates["NCNO"].astype(str) == str(ncno_filter)]
-
-    # sort candidates by date ascending
-    candidates["_parsed_date_from"] = candidates["DATE_FROM"].apply(parse_date_flexible)
-    candidates = candidates.sort_values(by="_parsed_date_from", na_position="last").drop(columns=["_parsed_date_from"])
-    # build quick maps
-    staff_map_by_id = {normalize_staff_id(r.get("Staff ID")): idx for idx, r in staff_df.iterrows() if normalize_staff_id(r.get("Staff ID"))}
-    # helper to check reserved or busy
-    def staff_is_reserved_for_dates(sid: str, req_dates: List[str]) -> bool:
-        for d in req_dates:
-            if d in reserved and sid in reserved[d]:
-                return True
-        return False
-
-    for idx, row in candidates.iterrows():
-        if dont_touch_existing_extid:
-            # needs_ext ensures ext is empty already
-            pass
-        d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
-        if d1 is None or d2 is None or d1 > d2:
-            reason_map[idx] = "Invalid dates"
-            selection[idx] = ""
-            continue
-        req_dates = [date_to_str(d) for d in daterange(d1, d2)]
-        ins = str(row.get("INSCODE","")).strip()
-        ncno = str(row.get("NCNO","")).strip()
-
-        # candidate staff selection
-        candidate_pool = []
-        for s in staff_rows:
-            if s["INSTT"] == ins:
-                continue
-            if ncno and str(s.get("dep code","")).strip() and str(s.get("dep code","")).strip() != str(ncno).strip():
-                continue
-            sid = s["Staff ID"]
-            stats_entry = staff_stats.get(sid, {"duty_count":0, "date_tokens":{}, "INSTT": s["INSTT"], "dep_code": s["dep code"], "name": s.get("name",""), "designation": s.get("designation","")})
-            busy_for_staff = [br for br in busy_list if br.get("Staff ID") == sid]
-            is_free, conflicts, busy_overlaps = availability_for_req_dates(stats_entry, req_dates, busy_records=busy_for_staff)
-            # exclude if reserved or busy/conflict unless force_allow
-            reserved_conflict = staff_is_reserved_for_dates(sid, req_dates)
-            if reserved_conflict and not force_allow:
-                continue
-            if (not is_free) and (not force_allow):
-                continue
-            candidate_pool.append({
-                "sid": sid,
-                "name": s.get("name",""),
-                "designation": s.get("designation",""),
-                "duty_count": stats_entry.get("duty_count",0),
-                "is_free": is_free,
-                "conflicts": conflicts,
-                "busy_overlaps": busy_overlaps,
-                "INSTT": s.get("INSTT",""),
-                "dep_code": s.get("dep code","")
-            })
-        if not candidate_pool:
-            selection[idx] = ""
-            reason_map[idx] = "No free staff"
-            continue
-        # sort by duty_count, then staff id
-        candidate_pool_sorted = sorted(candidate_pool, key=lambda x: (x["duty_count"], x["sid"]))
-        chosen = candidate_pool_sorted[0]
-        chosen_sid = chosen["sid"]
-        selection[idx] = chosen_sid
-        reason_map[idx] = ""
-        if reserve:
-            for d in req_dates:
-                if d not in reserved:
-                    reserved[d] = set()
-                reserved[d].add(chosen_sid)
-
-    return selection, reserved, reason_map
-
-def reserve_add(reserved_map: Dict[str, Set[str]], staff_id: str, req_dates: List[str]):
-    for d in req_dates:
-        if d not in reserved_map:
-            reserved_map[d] = set()
-        reserved_map[d].add(staff_id)
-
-def reserve_remove(reserved_map: Dict[str, Set[str]], staff_id: str, req_dates: List[str]):
-    for d in req_dates:
-        if d in reserved_map and staff_id in reserved_map[d]:
-            reserved_map[d].remove(staff_id)
-            if not reserved_map[d]:
-                del reserved_map[d]
-
 # ---------- UI ----------
 st.title("🗂️ Duty Manager")
 st.caption("Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR")
 
-page = st.sidebar.radio("Pages", ["Panel Upload", "Duty Mark", "EXTID Allocate", "Auto Allocate"])
+page = st.sidebar.radio("Pages", ["Panel Upload", "Duty Mark", "EXTID Allocate"])
 
 # ------------------- Panel Upload -------------------
 if page == "Panel Upload":
@@ -1220,6 +1070,8 @@ elif page == "EXTID Allocate":
             busy_for_staff = [br for br in busy_list if br.get("Staff ID") == sid]
             is_free, conflicts, busy_overlaps = availability_for_req_dates(stats_entry, req_dates, busy_records=busy_for_staff)
             if not is_free:
+                # if busy overlaps, we treat as not eligible for suggestion by default
+                # but still include, marked as busy or duty
                 status = ""
                 if busy_overlaps:
                     status = "busy"
@@ -1242,8 +1094,11 @@ elif page == "EXTID Allocate":
                 "name": s.get("name",""),
                 "designation": s.get("designation","")
             })
+        # only include those with is_free True by default in the top suggestions (others can appear if you want)
         frees = [c for c in candidates_out if c["is_free"]]
+        # sort by duty_count then id
         frees_sorted = sorted(frees, key=lambda x: (x["duty_count"], x["staff_id"]))
+        # append some non-free items (optional) - here we just return frees so suggestions list excludes busy/duty
         return frees_sorted
 
     if candidates.empty:
@@ -1478,259 +1333,4 @@ elif page == "EXTID Allocate":
                 st.error(f"{len(fails)} commits failed (invalid ids or busy).")
                 st.dataframe(pd.DataFrame(fails))
 
-# ------------------- Auto Allocate -------------------
-elif page == "Auto Allocate":
-    st.header("🤖 Auto Allocate — auto-suggest externals & bulk apply")
-    st.info("Auto-selects top free staff for rows that need EXTID. Review, edit, then Bulk Apply. Uses in-memory reservations; Save to persist.")
-
-    panel = st.session_state.panel_df.copy()
-    staff = st.session_state.staff_df.copy()
-    busy_df = st.session_state.busy_df.copy()
-    submap = st.session_state.submap.copy()
-
-    # Controls
-    left, right = st.columns([2,1])
-    with left:
-        ins_opts = ["All"] + sorted([x for x in panel["INSCODE"].unique() if str(x).strip()!=""])
-        nc_opts = ["All"] + sorted([x for x in panel["NCNO"].unique() if str(x).strip()!=""])
-        ins_sel = st.selectbox("INSCODE filter", ins_opts, index=0)
-        nc_sel = st.selectbox("NCNO (Dept) filter", nc_opts, index=0)
-        top_k = st.number_input("Top-K candidates to consider", min_value=1, max_value=10, value=5, step=1)
-        reserve_toggle = st.checkbox("Reserve automatically (prevent reuse during this run)", value=True)
-        dont_touch_existing = st.checkbox("Do not overwrite existing EXTID rows", value=True)
-        force_allow = st.checkbox("Force-allow busy/duty (ignore conflicts) - use with caution", value=False)
-    with right:
-        st.write("Actions")
-        if st.button("Run Auto-Select (reserve & pre-fill)"):
-            try:
-                sel_map, reserved_map, reasons = auto_select_all_candidates(
-                    panel_df=panel,
-                    staff_df=staff,
-                    busy_df=busy_df,
-                    submap=submap,
-                    ins_filter=(None if ins_sel=="All" else ins_sel),
-                    ncno_filter=(None if nc_sel=="All" else nc_sel),
-                    reserve=reserve_toggle,
-                    dont_touch_existing_extid=dont_touch_existing,
-                    force_allow=force_allow,
-                    top_k=top_k
-                )
-                st.session_state.autoalloc_selection = sel_map.copy()
-                # convert reserved sets to plain lists for st.session_state
-                st.session_state.autoalloc_reserved = {d:set(v) for d,v in reserved_map.items()}
-                st.session_state.autoalloc_reasons = reasons.copy()
-                st.success(f"Auto-select finished: {len([k for k,v in sel_map.items() if v])} selections made.")
-            except Exception as e:
-                st.error("Auto-select failed: " + traceback.format_exc())
-
-        if st.button("Clear Auto-Selections"):
-            st.session_state.autoalloc_selection = {}
-            st.session_state.autoalloc_reserved = {}
-            st.session_state.autoalloc_undo_stack = []
-            st.success("Cleared auto-selections and reservations (in-session).")
-
-        if st.button("Bulk Apply Selected"):
-            # prepare a quick commit of all selections in st.session_state.autoalloc_selection
-            sel_map = st.session_state.autoalloc_selection.copy()
-            if not sel_map:
-                st.warning("No selections to apply. Run Auto-Select or pick manual selections first.")
-            else:
-                # snapshot for undo
-                snapshot = {
-                    "panel_rows": {},
-                    "staff_rows": {}
-                }
-                staff2 = st.session_state.staff_df.copy()
-                panel2 = st.session_state.panel_df.copy()
-                staff_map_idx = {normalize_staff_id(r.get("Staff ID")): idx for idx, r in staff2.iterrows() if normalize_staff_id(r.get("Staff ID"))}
-                fails = []
-                applied = 0
-                for pidx, chosen_sid in sel_map.items():
-                    if not chosen_sid:
-                        continue
-                    if pidx not in panel2.index:
-                        fails.append({"panel_index": pidx, "reason":"panel_row_missing"})
-                        continue
-                    row = panel2.loc[pidx]
-                    d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
-                    if d1 is None or d2 is None or d1 > d2:
-                        fails.append({"panel_index": pidx, "reason":"invalid_dates"})
-                        continue
-                    ins = str(row.get("INSCODE","")).strip()
-                    req_dates = [date_to_str(d) for d in daterange(d1, d2)]
-
-                    # validate availability unless force_allow
-                    # check busy_df for explicit busy
-                    busy_for_this = [br for _, br in busy_df.iterrows() if normalize_staff_id(br.get("Staff ID")) == chosen_sid]
-                    busy_conflicts = []
-                    for br in busy_for_this:
-                        bfrom = parse_date_flexible(br["DATE_FROM"]); bto = parse_date_flexible(br["DATE_TO"])
-                        if bfrom and bto:
-                            for d in daterange(d1, d2):
-                                if bfrom <= d <= bto:
-                                    busy_conflicts.append(f"{date_to_str(bfrom)}->{date_to_str(bto)}")
-                                    break
-                    # check current staff2 tokens
-                    # ensure staff row exists
-                    if chosen_sid not in staff_map_idx:
-                        # add empty row
-                        new = {c:"" for c in staff2.columns}
-                        new["Staff ID"] = chosen_sid
-                        staff2 = concat_row(staff2, new)
-                        staff_map_idx[chosen_sid] = staff2.index.max()
-                    sidx = staff_map_idx[chosen_sid]
-                    token_conflicts = []
-                    for dc in req_dates:
-                        if dc not in staff2.columns:
-                            staff2[dc] = ""
-                        cur = staff2.at[sidx, dc]
-                        toks = split_tokens(cur)
-                        if any(not is_busy_token(t) for t in toks):
-                            token_conflicts.append(dc)
-                    if not force_allow and (busy_conflicts or token_conflicts):
-                        fails.append({"panel_index": pidx, "staff": chosen_sid, "reason":"busy_or_conflict", "busy": busy_conflicts, "tokens": token_conflicts})
-                        continue
-
-                    # snapshot previous panel EXTID and affected staff cells
-                    snapshot["panel_rows"][pidx] = {"EXTID": panel2.at[pidx,"EXTID"] if "EXTID" in panel2.columns else ""}
-                    # snapshot staff cells for chosen staff and INTID
-                    snapshot["staff_rows"].setdefault(chosen_sid, {})
-                    for dc in req_dates:
-                        snapshot["staff_rows"][chosen_sid][dc] = staff2.at[sidx, dc] if dc in staff2.columns else ""
-
-                    # remove previous INSCODE tokens across all staff for this panel row (clean per-row)
-                    staff2 = remove_inscode_from_staff_cells(staff2, ins, d1, d2)
-
-                    # append INSCODE tokens for chosen staff
-                    for dc in req_dates:
-                        cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
-                        cur_s = "" if cur is None else str(cur).strip()
-                        if cur_s == "":
-                            staff2.at[sidx, dc] = ins
-                        else:
-                            staff2.at[sidx, dc] = cur_s + "," + ins
-
-                    # also append to INTID
-                    intid = normalize_staff_id(row.get("INTID"))
-                    if intid:
-                        if intid not in staff_map_idx:
-                            new = {c:"" for c in staff2.columns}
-                            new["Staff ID"] = intid
-                            staff2 = concat_row(staff2, new)
-                            staff_map_idx[intid] = staff2.index.max()
-                        iidx = staff_map_idx[intid]
-                        snapshot["staff_rows"].setdefault(intid, {})
-                        for dc in req_dates:
-                            snapshot["staff_rows"][intid][dc] = staff2.at[iidx, dc] if dc in staff2.columns else ""
-                            cur = staff2.at[iidx, dc] if dc in staff2.columns else ""
-                            cur_s = "" if cur is None else str(cur).strip()
-                            if cur_s == "":
-                                staff2.at[iidx, dc] = ins
-                            else:
-                                staff2.at[iidx, dc] = cur_s + "," + ins
-
-                    # set EXTID on panel row (normalized)
-                    panel2.at[pidx, "EXTID"] = chosen_sid
-                    applied += 1
-
-                # if any applied, push snapshot for undo
-                if applied:
-                    st.session_state.autoalloc_undo_stack.append(snapshot)
-                # persist in-memory
-                st.session_state.panel_df = panel2.copy()
-                st.session_state.staff_df = staff2.copy()
-                persist_panel()
-                persist_staff()
-                st.success(f"Bulk apply complete. Applied: {applied}, Failed: {len(fails)}")
-                if fails:
-                    st.error("Some rows failed to apply. See details below.")
-                    st.dataframe(pd.DataFrame(fails))
-        if st.button("Undo Last Bulk Apply"):
-            if not st.session_state.autoalloc_undo_stack:
-                st.warning("No undo snapshot available.")
-            else:
-                snap = st.session_state.autoalloc_undo_stack.pop()
-                # revert panel
-                panel2 = st.session_state.panel_df.copy()
-                staff2 = st.session_state.staff_df.copy()
-                for pidx, pdata in snap.get("panel_rows", {}).items():
-                    if pidx in panel2.index:
-                        panel2.at[pidx, "EXTID"] = pdata.get("EXTID","")
-                # revert staff cells
-                for sid, cells in snap.get("staff_rows", {}).items():
-                    # find or create staff row index
-                    staff_map_idx = {normalize_staff_id(r.get("Staff ID")): idx for idx, r in staff2.iterrows() if normalize_staff_id(r.get("Staff ID"))}
-                    if sid not in staff_map_idx:
-                        continue
-                    sidx = staff_map_idx[sid]
-                    for dc, val in cells.items():
-                        staff2.at[sidx, dc] = val
-                st.session_state.panel_df = panel2.copy()
-                st.session_state.staff_df = staff2.copy()
-                persist_panel()
-                persist_staff()
-                st.success("Undo applied (reverted last bulk apply).")
-
-        if st.button("Save (persist current state)"):
-            ok1 = persist_panel()
-            ok2 = persist_staff()
-            ok3 = persist_busy()
-            if ok1 and ok2:
-                st.success("Saved panel and staff to disk.")
-            else:
-                st.error("Save failed (see messages).")
-
-    st.markdown("---")
-    st.subheader("Auto-Selection Preview (editable)")
-    sel_map = st.session_state.autoalloc_selection.copy()
-    reasons = st.session_state.get("autoalloc_reasons", {})
-    # prepare preview dataframe
-    preview_rows = []
-    for pidx, row in panel.iterrows():
-        if pidx not in sel_map and not reasons.get(pidx):
-            continue
-        chosen = sel_map.get(pidx,"")
-        preview_rows.append({
-            "panel_index": pidx,
-            "INSCODE": row.get("INSCODE",""),
-            "NCNO": row.get("NCNO",""),
-            "SUBCODE": row.get("SUBCODE",""),
-            "SUBNAME": (submap[submap["SUBCODE"]==row.get("SUBCODE")]["SUBNAME"].iloc[0] if (not submap.empty and row.get("SUBCODE") in list(submap["SUBCODE"])) else ""),
-            "DATE_FROM": row.get("DATE_FROM",""),
-            "DATE_TO": row.get("DATE_TO",""),
-            "INTID": row.get("INTID",""),
-            "Selected_EXTID": chosen,
-            "Reason": reasons.get(pidx,"")
-        })
-    if preview_rows:
-        dfp = pd.DataFrame(preview_rows)
-        edited_preview = st.data_editor(dfp, key="auto_preview_editor", use_container_width=True, num_rows="dynamic")
-        # allow inline edits: if user edits Selected_EXTID, update st.session_state.autoalloc_selection
-        if st.button("Apply preview edits to session selections"):
-            try:
-                for _, r in edited_preview.iterrows():
-                    pidx = int(r["panel_index"])
-                    val = normalize_staff_id(r.get("Selected_EXTID"))
-                    if val:
-                        st.session_state.autoalloc_selection[pidx] = val
-                    else:
-                        if pidx in st.session_state.autoalloc_selection:
-                            st.session_state.autoalloc_selection.pop(pidx, None)
-                st.success("Updated session selections from preview edits.")
-            except Exception as e:
-                st.error("Failed to apply preview edits: " + str(e))
-    else:
-        st.info("No auto-selections / reasons to preview. Run Auto-Select first.")
-
-    st.markdown("---")
-    st.subheader("Reservation snapshot (in-session)")
-    reserved_map = st.session_state.autoalloc_reserved.copy()
-    if not reserved_map:
-        st.info("No reservations made yet.")
-    else:
-        res_list = []
-        for d, sset in reserved_map.items():
-            res_list.append({"Date": d, "ReservedStaffCount": len(sset), "StaffIDs": ",".join(sorted(list(sset)))})
-        st.dataframe(pd.DataFrame(res_list).fillna(""), height=300)
-
-# ------------------- END -------------------
+# ---------- END ----------

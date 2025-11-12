@@ -1330,7 +1330,20 @@ elif page == "EXTID Allocate":
                     st.success("✅")
                 else:
                     st.write("◻️")
-            with cols[4]:
+                        with cols[4]:
+                # initialize staging dict
+                if "staged_ext" not in st.session_state:
+                    st.session_state["staged_ext"] = {}
+
+                # Show staged indicator if already staged
+                staged_label = st.session_state["staged_ext"].get(str(pidx), "")
+                if staged_label and str(staged_label).strip() != "" and not is_zero_like(staged_label):
+                    st.success("Staged")
+                else:
+                    st.write("◻️")
+
+                # Small local buttons: single-row Apply (existing) + Stage checkbox (new)
+                # Single Apply (keeps previous behaviour)
                 if st.button("Apply", key=f"apply_{pidx}"):
                     chosen_label = ""
                     if sel and str(sel).strip() != "":
@@ -1347,58 +1360,84 @@ elif page == "EXTID Allocate":
                     else:
                         st.error(msg)
 
-               # ----- BULK APPLY (apply to ALL visible candidate rows) -----
-        st.markdown("---")
-        st.subheader("Bulk Apply")
-        st.markdown("Bulk Apply will apply the chosen free staff as EXTID to **ALL visible candidate rows** (honouring the current INSCODE / Dept / Date filters). The same validations as single Apply run for each row.")
-
-        col_b1, col_b2, col_b3 = st.columns([6,4,2])
-        with col_b1:
-            st.info(f"Visible candidate rows: {len(bulk_choices)} (these will all be processed when you click 'Bulk Apply to ALL visible rows').")
-            # show a small preview list
-            if bulk_choices:
-                st.write("Preview (first 10 visible rows):")
-                st.write("\n".join(bulk_choices[:10]))
-            else:
-                st.write("No visible candidate rows to apply.")
-        with col_b2:
-            # build a free-only staff selector for bulk apply (show emoji)
-            bulk_staff_list = [""]
-            if filter_from is not None and filter_to is not None:
-                agg_req_dates = [date_to_str(d) for d in daterange(filter_from, filter_to)]
-            else:
-                agg_req_dates = []
-            for s in staff_rows:
-                sid = s["Staff ID"]
-                avail_label, conflicts, busy_overlaps = build_avail_label_for_staff(sid, agg_req_dates)
-                if avail_label == "free":
-                    label_text = f"{sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{ staff_stats.get(sid, {}).get('duty_count',0) }"
-                    bulk_staff_list.append(label_with_status_emoji(avail_label, label_text))
-            bulk_staff_sel = st.selectbox("Choose free staff to Bulk Apply to ALL visible rows", options=bulk_staff_list, key="bulk_staff_sel")
-        with col_b3:
-            if st.button("Bulk Apply to ALL visible rows"):
-                if not bulk_choices:
-                    st.warning("No visible candidate rows to bulk-apply.")
-                elif not bulk_staff_sel or str(bulk_staff_sel).strip() == "":
-                    st.warning("Choose a free staff for bulk apply.")
+                # Stage checkbox - stores chosen selection in session_state for final bulk apply
+                # Show checkbox state based on session_state
+                stage_key = f"stage_chk_{pidx}"
+                # render checkbox and on toggle update staged_ext dict
+                chk = st.checkbox("Stage", value=(str(pidx) in st.session_state.get("staged_ext", {})), key=stage_key)
+                if chk:
+                    # Determine which label to stage (prefer suggestion sel over manual)
+                    chosen_label = ""
+                    if sel and str(sel).strip() != "":
+                        chosen_label = sel
+                    elif man and str(man).strip() != "":
+                        chosen_label = man
+                    else:
+                        # nothing selected -> uncheck and warn
+                        st.warning("Select suggestion/manual before staging this row.")
+                        # uncheck visually by clearing the checkbox in session_state (checkbox will remain checked this render,
+                        # but we remove entry to keep staged map accurate)
+                        st.session_state["staged_ext"].pop(str(pidx), None)
+                    if chosen_label:
+                        # store raw label (with emoji if present) so final apply can extract staff id robustly
+                        st.session_state["staged_ext"][str(pidx)] = chosen_label
                 else:
-                    # apply to every visible candidate row (use row_display_map to find pidx)
+                    # if unchecked, remove from staged
+                    if str(pidx) in st.session_state.get("staged_ext", {}):
+                        st.session_state["staged_ext"].pop(str(pidx), None)
+
+               # ----- BULK APPLY (apply to ALL visible candidate rows) -----
+             st.markdown("---")
+        st.subheader("Apply Staged (single final apply)")
+        st.markdown(
+            "Stage rows by checking **Stage** on each row after selecting the suggestion/manual entry. "
+            "When ready, click **Apply Staged to ALL visible rows** — this will run the same validation & persistence "
+            "logic used by the single-row Apply for each staged row."
+        )
+
+        col_b1, col_b2 = st.columns([6,4])
+        with col_b1:
+            staged_map = st.session_state.get("staged_ext", {})
+            if not staged_map:
+                st.info("No rows staged. Use the 'Stage' checkbox on each row to prepare them for final apply.")
+            else:
+                st.write(f"Staged rows: {len(staged_map)} (visible rows: {len(bulk_choices)})")
+                # optionally show quick preview
+                preview_lines = []
+                for k, v in staged_map.items():
+                    preview_lines.append(f"Row {k}: {v}")
+                st.text("\n".join(preview_lines[:30]))  # show up to first 30 staged entries
+
+        with col_b2:
+            if st.button("Apply Staged to ALL visible rows"):
+                staged_map = st.session_state.get("staged_ext", {})
+                if not staged_map:
+                    st.warning("No staged rows to apply.")
+                else:
                     success_count = 0
                     fail_list = []
-                    for sel_item in bulk_choices:
-                        pidx = row_display_map.get(sel_item)
-                        if pidx is None:
-                            fail_list.append({"row": sel_item, "reason": "not found"})
+                    # iterate over staged entries and apply using existing helper
+                    for pidx_str, chosen_label in list(staged_map.items()):
+                        try:
+                            pidx = int(pidx_str)
+                        except Exception:
+                            fail_list.append({"row": pidx_str, "reason": "invalid panel index"})
                             continue
-                        ok, msg = apply_ext_for_panel_row(pidx, bulk_staff_sel)
+                        # only apply if row is still a visible candidate (guard)
+                        if pidx not in candidates.index:
+                            fail_list.append({"row": pidx, "reason": "row not visible under current filters"})
+                            continue
+                        ok, msg = apply_ext_for_panel_row(pidx, chosen_label)
                         if ok:
                             success_count += 1
+                            # Remove from staged map after success
+                            st.session_state["staged_ext"].pop(pidx_str, None)
                         else:
                             fail_list.append({"row": pidx, "reason": msg})
                     if success_count:
-                        st.success(f"Bulk apply succeeded for {success_count} rows (of {len(bulk_choices)} visible rows).")
+                        st.success(f"Applied staged EXTID for {success_count} rows.")
                     if fail_list:
-                        st.error(f"Bulk apply failed for {len(fail_list)} rows.")
+                        st.error(f"Failed for {len(fail_list)} rows.")
                         st.dataframe(pd.DataFrame(fail_list))
 
 # ---------- END ----------

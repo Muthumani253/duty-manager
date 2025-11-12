@@ -1333,4 +1333,456 @@ elif page == "EXTID Allocate":
                 st.error(f"{len(fails)} commits failed (invalid ids or busy).")
                 st.dataframe(pd.DataFrame(fails))
 
-# ---------- END ----------
+# ------------------- Auto Allocate (REPLACEMENT) -------------------
+elif page == "Auto Allocate":
+    st.header("🤖 Auto Allocate — EXTID style review & bulk apply")
+    st.info("Works like EXTID Allocate but rows are pre-filled with auto-suggestions. Filter by INSCODE / NCNO and by a date (shows only rows covering that date). Edit selections then Bulk Apply.")
+
+    panel = st.session_state.panel_df.copy()
+    staff = st.session_state.staff_df.copy()
+    submap = st.session_state.submap.copy()
+    busy_df = st.session_state.busy_df.copy()
+
+    # Filters (match EXTID Allocate style)
+    ins_opts = ["All"] + sorted([x for x in panel["INSCODE"].unique() if str(x).strip()!=""])
+    nc_opts = ["All"] + sorted([x for x in panel["NCNO"].unique() if str(x).strip()!=""])
+    ins_sel = st.selectbox("INSCODE (filter)", ins_opts, index=0)
+    nc_sel = st.selectbox("NCNO / Department (filter)", nc_opts, index=0)
+
+    # Date filter: single date or date-range choice (show only rows whose intervals include the date or overlap range)
+    date_filter_mode = st.radio("Date filter mode", ["None", "Single date", "Date range"], index=0, horizontal=True)
+    date_from_filter = None
+    date_to_filter = None
+    if date_filter_mode == "Single date":
+        date_from_filter = st.date_input("Select date", value=date.today(), key="auto_date_single")
+        date_to_filter = date_from_filter
+    elif date_filter_mode == "Date range":
+        date_from_filter = st.date_input("From date", value=date.today(), key="auto_date_from")
+        date_to_filter = st.date_input("To date", value=date.today(), key="auto_date_to")
+        if date_from_filter > date_to_filter:
+            st.error("Date From must be <= Date To.")
+            st.stop()
+
+    # Candidate rows: only panel rows that need EXTID like EXTID Allocate
+    def needs_ext(r):
+        intid = str(r.get("INTID","")).strip()
+        extid_raw = r.get("EXTID","")
+        ext_empty = (str(extid_raw).strip() == "") or is_zero_like(extid_raw)
+        d1 = parse_date_flexible(r.get("DATE_FROM")); d2 = parse_date_flexible(r.get("DATE_TO"))
+        return intid != "" and ext_empty and (d1 is not None and d2 is not None and d1 <= d2)
+
+    candidates = panel[panel.apply(needs_ext, axis=1)].copy()
+    if ins_sel != "All":
+        candidates = candidates[candidates["INSCODE"].astype(str) == str(ins_sel)]
+    if nc_sel != "All":
+        candidates = candidates[candidates["NCNO"].astype(str) == str(nc_sel)]
+
+    # Apply date filter by checking overlap with panel DATE_FROM..DATE_TO
+    if date_filter_mode != "None":
+        df_rows = []
+        for idx, r in candidates.iterrows():
+            r_from = parse_date_flexible(r.get("DATE_FROM"))
+            r_to = parse_date_flexible(r.get("DATE_TO"))
+            if r_from is None or r_to is None:
+                continue
+            # overlap condition
+            if not (r_to < date_from_filter or r_from > date_to_filter):
+                df_rows.append(idx)
+        candidates = candidates.loc[df_rows]
+
+    # sort like EXTID Allocate
+    candidates["_parsed_date_from"] = candidates["DATE_FROM"].apply(parse_date_flexible)
+    candidates = candidates.sort_values(by="_parsed_date_from", na_position="last").drop(columns=["_parsed_date_from"])
+
+    # helpers: suggestions (reuse logic from EXTID Allocate)
+    staff_rows = []
+    for _, s in st.session_state.staff_df.iterrows():
+        sid_norm = normalize_staff_id(s.get("Staff ID"))
+        if not sid_norm:
+            continue
+        staff_rows.append({
+            "Staff ID": sid_norm,
+            "INSTT": s.get("INSTT",""),
+            "dep code": s.get("dep code",""),
+            "name": s.get("Name of the Staff",""),
+            "designation": s.get("Designation","")
+        })
+    staff_stats = compute_staff_duty_stats(st.session_state.staff_df)
+    busy_list = []
+    for _, b in st.session_state.busy_df.iterrows():
+        busy_list.append({"Staff ID": normalize_staff_id(b.get("Staff ID")), "DATE_FROM": b.get("DATE_FROM"), "DATE_TO": b.get("DATE_TO"), "NOTE": b.get("NOTE","")})
+
+    def suggestions_for_row_with_stats(row):
+        ins = str(row.get("INSCODE","")).strip()
+        dept = str(row.get("NCNO","")).strip()
+        d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
+        if not (d1 and d2):
+            return []
+        req_dates = [date_to_str(d) for d in daterange(d1, d2)]
+        candidates_out = []
+        for s in staff_rows:
+            if s["INSTT"] == ins:
+                continue
+            if dept and str(s["dep code"]).strip() and str(s["dep code"]).strip() != str(dept).strip():
+                continue
+            sid = s["Staff ID"]
+            stats_entry = staff_stats.get(sid, {"duty_count":0, "date_tokens":{}, "INSTT": s["INSTT"], "dep_code": s["dep code"], "name": s.get("name",""), "designation": s.get("designation","")})
+            duty_count = stats_entry.get("duty_count", 0)
+            busy_for_staff = [br for br in busy_list if br.get("Staff ID") == sid]
+            is_free, conflicts, busy_overlaps = availability_for_req_dates(stats_entry, req_dates, busy_records=busy_for_staff)
+            status = "free" if is_free else ("busy" if busy_overlaps else ("duty:" + ",".join(conflicts) if conflicts else "busy"))
+            label = f"{sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {status}"
+            candidates_out.append({
+                "staff_id": sid,
+                "label": label,
+                "duty_count": duty_count,
+                "is_free": is_free,
+                "conflicts": conflicts,
+                "busy_overlaps": busy_overlaps,
+                "INSTT": s.get("INSTT",""),
+                "dep_code": s.get("dep code",""),
+                "name": s.get("name",""),
+                "designation": s.get("designation","")
+            })
+        frees = [c for c in candidates_out if c["is_free"]]
+        frees_sorted = sorted(frees, key=lambda x: (x["duty_count"], x["staff_id"]))
+        return frees_sorted
+
+    st.metric("Rows needing EXTID (visible)", len(candidates))
+    st.metric("Staff rows", len(st.session_state.staff_df))
+
+    # iterate rows — layout identical to EXTID Allocate but with preselection
+    if candidates.empty:
+        st.info("No rows need EXTID for the selected filters.")
+    else:
+        for _, row in candidates.reset_index().iterrows():
+            pidx = int(row["index"])
+            subname = ""
+            subcode = row.get("SUBCODE","")
+            if not submap.empty and subcode in list(submap["SUBCODE"]):
+                subname = submap[submap["SUBCODE"]==subcode]["SUBNAME"].iloc[0]
+            cols = st.columns([3,5,3,1,1])
+            with cols[0]:
+                display_sub = f" — Subname: {subname}" if subname else ""
+                noc = row.get("NOC","")
+                intid_raw = row.get("INTID","")
+                intid_norm = normalize_staff_id(intid_raw)
+                intname = get_staff_name_by_id(st.session_state.staff_df, intid_norm) if intid_norm else ""
+                int_display = str(intid_raw).strip()
+                if intname:
+                    int_display = int_display + " — " + intname
+                st.markdown(
+                    f"**Row {pidx}** • INSCODE **{row.get('INSCODE')}** • NCNO **{row.get('NCNO')}** • SUBCODE **{row.get('SUBCODE')}**{display_sub} • NOC **{noc}** • {row.get('DATE_FROM')} → {row.get('DATE_TO')}  \n"
+                    f"**INT:** {int_display}"
+                )
+            with cols[1]:
+                # build suggestion list and preselect if present in session map
+                suggs = suggestions_for_row_with_stats(row)
+                select_opts = [""] + [s["label"] for s in suggs]
+                # pre-selection: if autoalloc_selection has an entry, find its label and set as default via key
+                pre_choice = ""
+                sel_sid_prefill = st.session_state.autoalloc_selection.get(pidx, "")
+                if sel_sid_prefill:
+                    # find corresponding label in suggs (or build manual-like label)
+                    found_label = None
+                    for s in suggs:
+                        if s["staff_id"] == sel_sid_prefill:
+                            found_label = s["label"]; break
+                    if not found_label:
+                        # build a label using staff stats if staff exists in staff_rows
+                        for s in staff_rows:
+                            if s["Staff ID"] == sel_sid_prefill:
+                                found_label = f"{sel_sid_prefill} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{staff_stats.get(sel_sid_prefill,{}).get('duty_count',0)} — unknown"
+                                break
+                    if found_label:
+                        pre_choice = found_label
+                key_sugg = f"auto_sugg_{pidx}_{sel_sid_prefill}"
+                if select_opts:
+                    # if pre_choice not in options and not "", insert it at top (allows manual prefill)
+                    opts = select_opts.copy()
+                    if pre_choice and pre_choice not in opts:
+                        opts = [pre_choice] + opts
+                    sel = st.selectbox(f"🔎 Suggestions — {pidx}", options=opts, index=0 if not pre_choice else opts.index(pre_choice), key=key_sugg)
+                else:
+                    sel = ""
+                    st.caption("⚠️ No suggestions (free staff from same dept & different institute)")
+
+            with cols[2]:
+                d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
+                req_dates = [date_to_str(d) for d in daterange(d1, d2)] if (d1 and d2) else []
+                # manual list like EXTID Allocate (include availability)
+                man_list = [""]
+                for s in staff_rows:
+                    sid = s["Staff ID"]
+                    stats_entry = staff_stats.get(sid, {"duty_count":0, "date_tokens":{}, "INSTT": s["INSTT"], "dep_code": s["dep code"], "name": s.get("name",""), "designation": s.get("designation","")})
+                    duty_count = stats_entry.get("duty_count", 0)
+                    is_free, conflicts, busy_overlaps = availability_for_req_dates(stats_entry, req_dates, busy_records=[br for br in busy_list if br["Staff ID"]==sid])
+                    avail_label = "free" if is_free else ("duty:" + ",".join(conflicts) if conflicts else ("busy" if busy_overlaps else "busy"))
+                    label = f"{sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {avail_label}"
+                    man_list.append(label)
+                # if session selection exists, show it as selected label in manual too (so user can edit)
+                existing_ext = st.session_state.panel_df.at[pidx, "EXTID"] if pidx in st.session_state.panel_df.index else ""
+                existing_norm2 = normalize_staff_id(existing_ext)
+                key_man = f"auto_man_{pidx}_{existing_norm2 if existing_norm2 else ''}"
+                man = st.selectbox(f"✍️ Manual — {pidx}", options=man_list, key=key_man)
+
+            with cols[3]:
+                staged = st.session_state.panel_df.at[pidx,"EXTID"] if pidx in st.session_state.panel_df.index else ""
+                if staged and str(staged).strip() != "" and not is_zero_like(staged):
+                    st.success("✅")
+                else:
+                    st.write("◻️")
+
+            with cols[4]:
+                # Apply single-row immediate (same as EXTID page)
+                if st.button("Apply", key=f"auto_apply_{pidx}"):
+                    chosen_label = ""
+                    if sel and str(sel).strip() != "":
+                        chosen_label = sel
+                    elif man and str(man).strip() != "":
+                        chosen_label = man
+                    else:
+                        st.warning("Choose suggestion or manual staff.")
+                        continue
+
+                    # extract staff id robustly
+                    parts = chosen_label.split("—")
+                    if len(parts) == 0 or not parts[0].strip():
+                        st.error("Selected label does not contain a valid staff id.")
+                        continue
+                    staff_id_only = parts[0].strip()
+                    staff_id_only_norm = normalize_staff_id(staff_id_only)
+                    if not staff_id_only_norm:
+                        st.error("Selected staff ID is invalid (0 or blank). Please choose a valid staff.")
+                        continue
+
+                    ins = str(row.get("INSCODE","")).strip()
+                    d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
+                    if not ins or d1 is None or d2 is None or d1 > d2:
+                        st.error("Invalid panel row dates or INSCODE — cannot apply.")
+                        continue
+
+                    # build staff2 and ensure date cols
+                    staff2 = st.session_state.staff_df.copy()
+                    for d in daterange(d1, d2):
+                        dc = date_to_str(d)
+                        if dc not in staff2.columns:
+                            staff2[dc] = ""
+
+                    # Remove previous INSCODE tokens for this panel row across all staff (clean per-row)
+                    staff2 = remove_inscode_from_staff_cells(staff2, ins, d1, d2)
+
+                    # find or add staff row
+                    mask = staff2["Staff ID"].astype(str).str.upper() == staff_id_only_norm.upper()
+                    if not mask.any():
+                        new = {c:"" for c in staff2.columns}
+                        new["Staff ID"] = staff_id_only_norm
+                        staff2 = concat_row(staff2, new)
+                        mask = staff2["Staff ID"].astype(str).str.upper() == staff_id_only_norm.upper()
+                    sidx = staff2[mask].index[0]
+
+                    # Check busy records first (explicit busy)
+                    busy_for_this = [br for br in busy_list if br["Staff ID"] == staff_id_only_norm]
+                    busy_conflicts = []
+                    for br in busy_for_this:
+                        bfrom = parse_date_flexible(br["DATE_FROM"]); bto = parse_date_flexible(br["DATE_TO"])
+                        if bfrom and bto:
+                            for d in daterange(d1, d2):
+                                if bfrom <= d <= bto:
+                                    busy_conflicts.append(f"{date_to_str(bfrom)}->{date_to_str(bto)}")
+                                    break
+                    if busy_conflicts:
+                        st.error(f"Cannot apply EXTID {staff_id_only_norm}: busy on {', '.join(busy_conflicts)} (Busy record).")
+                        if pidx in st.session_state.panel_df.index:
+                            prev = st.session_state.panel_df.at[pidx, "ERROR"]
+                            newerr = (str(prev) + "; " if str(prev).strip() else "") + f"EXT apply failed busy_rec:{','.join(busy_conflicts)}"
+                            st.session_state.panel_df.at[pidx, "ERROR"] = newerr
+                            persist_panel()
+                        continue
+
+                    # Check availability via tokens (non-B)
+                    busy_found = []
+                    for d in daterange(d1, d2):
+                        dc = date_to_str(d)
+                        val = staff2.at[sidx, dc] if dc in staff2.columns else ""
+                        toks = split_tokens(val)
+                        if any(not is_busy_token(t) for t in toks):
+                            busy_found.append(dc)
+                    if busy_found:
+                        st.error(f"Cannot apply EXTID {staff_id_only_norm}: already has duty token(s) on {', '.join(busy_found)}")
+                        if pidx in st.session_state.panel_df.index:
+                            prev = st.session_state.panel_df.at[pidx, "ERROR"]
+                            newerr = (str(prev) + "; " if str(prev).strip() else "") + f"EXT apply failed busy_tok:{','.join(busy_found)}"
+                            st.session_state.panel_df.at[pidx, "ERROR"] = newerr
+                            persist_panel()
+                        continue
+
+                    # Append INSCODE for each date to the chosen EXT staff (allow duplicates)
+                    for d in daterange(d1, d2):
+                        dc = date_to_str(d)
+                        cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
+                        cur_s = "" if cur is None else str(cur).strip()
+                        if cur_s == "":
+                            staff2.at[sidx, dc] = ins
+                        else:
+                            staff2.at[sidx, dc] = cur_s + "," + ins
+
+                    # Also append to INTID (if present and valid)
+                    intid = normalize_staff_id(row.get("INTID"))
+                    if intid:
+                        mask_i = staff2["Staff ID"].astype(str).str.upper() == intid.upper()
+                        if not mask_i.any():
+                            new = {c:"" for c in staff2.columns}
+                            new["Staff ID"] = intid
+                            staff2 = concat_row(staff2, new)
+                            mask_i = staff2["Staff ID"].astype(str).str.upper() == intid.upper()
+                        iidx = staff2[mask_i].index[0]
+                        for d in daterange(d1, d2):
+                            dc = date_to_str(d)
+                            cur = staff2.at[iidx, dc] if dc in staff2.columns else ""
+                            cur_s = "" if cur is None else str(cur).strip()
+                            if cur_s == "":
+                                staff2.at[iidx, dc] = ins
+                            else:
+                                staff2.at[iidx, dc] = cur_s + "," + ins
+
+                    # persist: set EXTID in authoritative panel row to normalized value
+                    if pidx in st.session_state.panel_df.index:
+                        st.session_state.panel_df.at[pidx, "EXTID"] = staff_id_only_norm
+                        prev_err = st.session_state.panel_df.at[pidx, "ERROR"]
+                        if prev_err and "EXT apply failed" in prev_err:
+                            parts = [pt for pt in str(prev_err).split(";") if "EXT apply failed" not in pt]
+                            st.session_state.panel_df.at[pidx, "ERROR"] = ";".join([p.strip() for p in parts if p.strip()!=""])
+                        persist_panel()  # persist authoritative panel immediately
+
+                    # persist staff
+                    st.session_state.staff_df = staff2.copy()
+                    persist_staff()
+
+                    # if this row was in autoalloc_selection, update it
+                    st.session_state.autoalloc_selection[pidx] = staff_id_only_norm
+
+                    st.success(f"✅ Applied EXTID {staff_id_only_norm} and saved. INSCODE {ins} marked for {date_to_str(d1)} → {date_to_str(d2)}")
+
+    # bottom: Bulk Apply / Undo / Save for auto selections (same operations as previous Auto page)
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1,1,1])
+    with col1:
+        if st.button("Bulk Apply Selected (Auto)"):
+            # reuse Bulk Apply logic from Auto page: use st.session_state.autoalloc_selection
+            sel_map = st.session_state.autoalloc_selection.copy()
+            if not sel_map:
+                st.warning("No selections found. Run Auto-Select or prefill selections.")
+            else:
+                snapshot = {"panel_rows":{}, "staff_rows":{}}
+                staff2 = st.session_state.staff_df.copy()
+                panel2 = st.session_state.panel_df.copy()
+                staff_map_idx = {normalize_staff_id(r.get("Staff ID")): idx for idx, r in staff2.iterrows() if normalize_staff_id(r.get("Staff ID"))}
+                fails = []
+                applied = 0
+                for pidx, chosen_sid in sel_map.items():
+                    if not chosen_sid:
+                        continue
+                    if pidx not in panel2.index:
+                        fails.append({"panel_index": pidx, "reason":"panel_row_missing"})
+                        continue
+                    row = panel2.loc[pidx]
+                    d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
+                    if d1 is None or d2 is None or d1 > d2:
+                        fails.append({"panel_index": pidx, "reason":"invalid_dates"})
+                        continue
+                    ins = str(row.get("INSCODE","")).strip()
+                    req_dates = [date_to_str(d) for d in daterange(d1, d2)]
+
+                    # ensure staff row exists
+                    if chosen_sid not in staff_map_idx:
+                        new = {c:"" for c in staff2.columns}
+                        new["Staff ID"] = chosen_sid
+                        staff2 = concat_row(staff2, new)
+                        staff_map_idx[chosen_sid] = staff2.index.max()
+                    sidx = staff_map_idx[chosen_sid]
+
+                    # check conflicts (busy / tokens)
+                    # busy
+                    busy_for_this = [br for _, br in busy_df.iterrows() if normalize_staff_id(br.get("Staff ID")) == chosen_sid]
+                    busy_conflicts = []
+                    for br in busy_for_this:
+                        bfrom = parse_date_flexible(br["DATE_FROM"]); bto = parse_date_flexible(br["DATE_TO"])
+                        if bfrom and bto:
+                            for d in daterange(d1, d2):
+                                if bfrom <= d <= bto:
+                                    busy_conflicts.append(f"{date_to_str(bfrom)}->{date_to_str(bto)}")
+                                    break
+                    token_conflicts = []
+                    for dc in req_dates:
+                        if dc not in staff2.columns:
+                            staff2[dc] = ""
+                        cur = staff2.at[sidx, dc]
+                        toks = split_tokens(cur)
+                        if any(not is_busy_token(t) for t in toks):
+                            token_conflicts.append(dc)
+                    if busy_conflicts or token_conflicts:
+                        fails.append({"panel_index": pidx, "staff": chosen_sid, "reason":"busy_or_conflict", "busy": busy_conflicts, "tokens": token_conflicts})
+                        continue
+
+                    # snapshot
+                    snapshot["panel_rows"][pidx] = {"EXTID": panel2.at[pidx,"EXTID"] if "EXTID" in panel2.columns else ""}
+                    snapshot["staff_rows"].setdefault(chosen_sid, {})
+                    for dc in req_dates:
+                        snapshot["staff_rows"][chosen_sid][dc] = staff2.at[sidx, dc] if dc in staff2.columns else ""
+
+                    # remove previous INSCODE tokens across all staff for this panel row
+                    staff2 = remove_inscode_from_staff_cells(staff2, ins, d1, d2)
+                    # append for chosen staff
+                    for dc in req_dates:
+                        cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
+                        cur_s = "" if cur is None else str(cur).strip()
+                        if cur_s == "":
+                            staff2.at[sidx, dc] = ins
+                        else:
+                            staff2.at[sidx, dc] = cur_s + "," + ins
+                    # append to INTID too
+                    intid = normalize_staff_id(row.get("INTID"))
+                    if intid:
+                        if intid not in staff_map_idx:
+                            new = {c:"" for c in staff2.columns}
+                            new["Staff ID"] = intid
+                            staff2 = concat_row(staff2, new)
+                            staff_map_idx[intid] = staff2.index.max()
+                        iidx = staff_map_idx[intid]
+                        snapshot["staff_rows"].setdefault(intid, {})
+                        for dc in req_dates:
+                            snapshot["staff_rows"][intid][dc] = staff2.at[iidx, dc] if dc in staff2.columns else ""
+                            cur = staff2.at[iidx, dc] if dc in staff2.columns else ""
+                            cur_s = "" if cur is None else str(cur).strip()
+                            if cur_s == "":
+                                staff2.at[iidx, dc] = ins
+                            else:
+                                staff2.at[iidx, dc] = cur_s + "," + ins
+
+                    panel2.at[pidx, "EXTID"] = chosen_sid
+                    applied += 1
+
+                if applied:
+                    st.session_state.autoalloc_undo_stack.append(snapshot)
+                st.session_state.panel_df = panel2.copy()
+                st.session_state.staff_df = staff2.copy()
+                persist_panel(); persist_staff()
+                st.success(f"Bulk apply complete. Applied: {applied}, Failed: {len(fails)}")
+                if fails:
+                    st.dataframe(pd.DataFrame(fails))
+
+    # small info area
+    st.markdown("---")
+    if st.button("Save current session state to disk"):
+        ok1 = persist_panel()
+        ok2 = persist_staff()
+        ok3 = persist_busy()
+        if ok1 and ok2:
+            st.success("Saved panel and staff to disk.")
+        else:
+            st.error("Save failed.")
+
+
+# ------------------- END -------------------
+

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # streamlit_app.py
 """
-Duty Manager - Full application
+Duty Manager - Full application (with colour-dot status indicators)
 - Panel authoritative; live Duty Mark view
-- Busy dropdown shows "StaffID — Name"
 - EXTID suggestions & manual include Designation in label
+- Colour dots: 🔴 busy/conflict, 🟡 instructor/workshop designation, 🟢 free
 Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR
-Minor fixes: stable widget keys and optional safe rerun after apply so UI reflects changes immediately.
 """
 from __future__ import annotations
 import os
@@ -229,7 +228,11 @@ STAFF_CORE_COLS = ["Staff ID","INSTT","Name of the Staff","Department","dep code
 BUSY_COLS = ["Staff ID","DATE_FROM","DATE_TO","NOTE","__rowid"]
 
 if "panel_df" not in st.session_state:
-    pf = load_or_empty(PANEL_PATH, PANEL_COLS)
+    pf = load_or_empty = None  # placeholder to avoid lint, real load below
+
+# reuse load_or_empty implemented earlier
+if "panel_df" not in st.session_state:
+    pf = load_or_empty(os.path.join(DATA_DIR, "panel.csv"), PANEL_COLS)
     pf = ensure_rowid(pf, prefix="p")
     for c in PANEL_COLS:
         if c not in pf.columns:
@@ -376,6 +379,27 @@ def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
                     busy_overlaps.append(f"{date_to_str(bfrom)}->{date_to_str(bto)}")
                     break
     return (len(conflicts) == 0 and len(busy_overlaps) == 0, sorted(conflicts), sorted(set(busy_overlaps)))
+
+# ---------- Status-dot utilities ----------
+def designation_is_instructor(designation: str) -> bool:
+    if not designation:
+        return False
+    s = str(designation).lower()
+    return "instructor" in s or "workshop" in s or "lab" in s
+
+def status_dot_for_staff(stats_entry, req_dates, staff_row):
+    """
+    Priority:
+      - if not free (busy overlaps or conflicts) -> 🔴
+      - else if designation looks like instructor/workshop -> 🟡
+      - else -> 🟢
+    """
+    is_free, conflicts, busy_overlaps = availability_for_req_dates(stats_entry, req_dates, busy_records=None)
+    if not is_free:
+        return "🔴"
+    if designation_is_instructor(staff_row.get("Designation","")):
+        return "🟡"
+    return "🟢"
 
 # ---------- UI ----------
 st.title("🗂️ Duty Manager")
@@ -1065,17 +1089,9 @@ elif page == "EXTID Allocate":
             # check busy records for this staff
             busy_for_staff = [br for br in busy_list if br.get("Staff ID") == sid]
             is_free, conflicts, busy_overlaps = availability_for_req_dates(stats_entry, req_dates, busy_records=busy_for_staff)
-            if not is_free:
-                status = ""
-                if busy_overlaps:
-                    status = "busy"
-                elif conflicts:
-                    status = "duty:" + ",".join(conflicts)
-                else:
-                    status = "busy"
-            else:
-                status = "free"
-            label = f"{sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {status}"
+            # determine dot
+            dot = "🔴" if not is_free else ("🟡" if designation_is_instructor(s.get("designation","")) else "🟢")
+            label = f"{dot} {sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count}"
             candidates_out.append({
                 "staff_id": sid,
                 "label": label,
@@ -1116,10 +1132,9 @@ elif page == "EXTID Allocate":
             with cols[1]:
                 suggs = suggestions_for_row_with_stats(row)
                 if suggs:
-                    top_preview = ", ".join([f"{s['staff_id']}(free)" for s in suggs[:6]])
+                    top_preview = ", ".join([f"{s['label']}" for s in suggs[:6]])
                     st.caption("Top suggestions: " + top_preview)
                     select_opts = [""] + [s["label"] for s in suggs]
-                    # stable key per row (avoid including existing EXTID in key)
                     key_sugg = f"sugg_{pidx}"
                     sel = st.selectbox(f"🔎 Suggestions — {pidx}", options=select_opts, key=key_sugg)
                 else:
@@ -1128,15 +1143,16 @@ elif page == "EXTID Allocate":
             with cols[2]:
                 d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
                 req_dates = [date_to_str(d) for d in daterange(d1, d2)] if (d1 and d2) else []
-                # manual list includes designation
-                man_list = [""]  # stable ordering
+                # manual list includes designation and status dot
+                man_list = [""]
                 for s in staff_rows:
                     sid = s["Staff ID"]
                     stats_entry = staff_stats.get(sid, {"duty_count":0, "date_tokens":{}, "INSTT": s["INSTT"], "dep_code": s["dep code"], "name": s.get("name",""), "designation": s.get("designation","")})
                     duty_count = stats_entry.get("duty_count", 0)
                     is_free, conflicts, busy_overlaps = availability_for_req_dates(stats_entry, req_dates, busy_records=[br for br in busy_list if br["Staff ID"]==sid])
+                    dot = "🔴" if not is_free else ("🟡" if designation_is_instructor(s.get("designation","")) else "🟢")
                     avail_label = "free" if is_free else ("duty:" + ",".join(conflicts) if conflicts else ("busy" if busy_overlaps else "busy"))
-                    label = f"{sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {avail_label}"
+                    label = f"{dot} {sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {avail_label}"
                     man_list.append(label)
                 key_man = f"man_{pidx}"
                 man = st.selectbox(f"✍️ Manual — {pidx}", options=man_list, key=key_man)
@@ -1161,7 +1177,7 @@ elif page == "EXTID Allocate":
                     if len(parts) == 0 or not parts[0].strip():
                         st.error("Selected label does not contain a valid staff id.")
                         continue
-                    staff_id_only = parts[0].strip()
+                    staff_id_only = parts[0].strip().replace("🔴","").replace("🟡","").replace("🟢","").strip()
                     staff_id_only_norm = normalize_staff_id(staff_id_only)
                     if not staff_id_only_norm:
                         st.error("Selected staff ID is invalid (0 or blank). Please choose a valid staff.")
@@ -1276,10 +1292,8 @@ elif page == "EXTID Allocate":
                         if hasattr(st, "experimental_rerun"):
                             st.experimental_rerun()
                     except Exception:
-                        # If experimental_rerun not available in this Streamlit build, do nothing.
                         pass
 
-                    # success message (may not be reached if rerun fired)
                     st.success(f"✅ Applied EXTID {staff_id_only_norm} and saved. INSCODE {ins} marked for {date_to_str(d1)} → {date_to_str(d2)}")
 
         st.markdown("---")

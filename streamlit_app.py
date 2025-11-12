@@ -3,8 +3,9 @@
 """
 Duty Manager - Full application
 - Panel authoritative; live Duty Mark view
-- EXTID suggestions & manual list show busy/duty in red and workshop instructors in yellow.
-- By default busy/duty/workshop candidates are not selectable. Global override checkbox allows forcing assignment.
+- EXTID suggestions & manual dropdowns now include inline status emojis:
+    🟢 FREE, 🔴 BUSY/DUTY, 🟡 WORKSHOP
+- By default blocked candidates (🔴 or 🟡) are not applied unless override is enabled.
 Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR
 """
 from __future__ import annotations
@@ -364,7 +365,6 @@ def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
                     conflicts.append(t)
     busy_overlaps = []
     if busy_records is not None:
-        sid = stats_entry.get("name")  # not used here
         for br in busy_records:
             bfrom = parse_date_flexible(br.get("DATE_FROM"))
             bto = parse_date_flexible(br.get("DATE_TO"))
@@ -378,7 +378,6 @@ def availability_for_req_dates(stats_entry, req_dates, busy_records=None):
     return (len(conflicts) == 0 and len(busy_overlaps) == 0, sorted(conflicts), sorted(set(busy_overlaps)))
 
 def is_workshop_designation(designation: str) -> bool:
-    """Detect workshop instructor-like designations (case-insensitive substrings)"""
     if designation is None:
         return False
     s = str(designation).lower()
@@ -996,21 +995,18 @@ elif page == "Duty Mark":
 # ------------------- EXTID Allocate -------------------
 elif page == "EXTID Allocate":
     st.header("🧾 EXTID Allocate — assign externals")
-    st.info("Filter by INSCODE and Department. Suggestions show staff status (free/duty/busy/workshop). By default busy/duty/workshop candidates are blocked from selection. Toggle override to force assign (not recommended).")
+    st.info("Filter by INSCODE and Department. Suggestions & manual dropdowns include inline status emoji. By default blocked candidates are not applied unless override is enabled.")
 
-    # authoritative panel
     panel = st.session_state.panel_df.copy()
     staff = st.session_state.staff_df.copy()
     submap = st.session_state.submap.copy()
-    busy_records_df = st.session_state.busy_df.copy()
 
     ins_opts3 = ["All"] + sorted([x for x in panel["INSCODE"].unique() if str(x).strip()!=""])
     ins_sel3 = st.selectbox("INSCODE (All)", ins_opts3, index=0)
     dept_opts3 = ["All"] + sorted([x for x in panel["NCNO"].unique() if str(x).strip()!=""])
     dept_sel3 = st.selectbox("Department / NCNO (All)", dept_opts3, index=0)
 
-    # global override toggle (allows selecting busy/workshop)
-    override_allow = st.checkbox("Allow override (enable selecting busy/workshop candidates)", value=False, help="When checked, EXTID assignment may forcibly assign a busy or workshop instructor. Use with caution.")
+    override_allow = st.checkbox("Allow override (enable selecting blocked candidates)", value=False, help="When checked, EXTID assignment may forcibly assign a busy/duty/workshop staff. Use with caution.")
 
     def get_subname(subcode):
         if submap is None or submap.empty:
@@ -1039,7 +1035,7 @@ elif page == "EXTID Allocate":
     st.metric("Rows needing EXTID (visible)", len(candidates))
     st.metric("Staff rows", len(st.session_state.staff_df))
 
-    # Prepare staff_rows with designation and other meta
+    # prepare staff rows & stats
     staff_rows = []
     for _, s in st.session_state.staff_df.iterrows():
         sid_norm = normalize_staff_id(s.get("Staff ID"))
@@ -1052,23 +1048,19 @@ elif page == "EXTID Allocate":
             "name": s.get("Name of the Staff",""),
             "designation": s.get("Designation","")
         })
-
     staff_stats = compute_staff_duty_stats(st.session_state.staff_df)
-
-    # Build busy records dict list for quick lookup
     busy_list = []
     for _, b in st.session_state.busy_df.iterrows():
         busy_list.append({"Staff ID": normalize_staff_id(b.get("Staff ID")), "DATE_FROM": b.get("DATE_FROM"), "DATE_TO": b.get("DATE_TO"), "NOTE": b.get("NOTE","")})
 
-    def suggestions_for_row_with_stats(row):
+    def build_candidate_entries_for_row(row):
         ins = str(row.get("INSCODE","")).strip()
         dept = str(row.get("NCNO","")).strip()
         d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
         if not (d1 and d2):
             return []
         req_dates = [date_to_str(d) for d in daterange(d1, d2)]
-
-        candidates_out = []
+        out = []
         for s in staff_rows:
             if s["INSTT"] == ins:
                 continue
@@ -1080,50 +1072,48 @@ elif page == "EXTID Allocate":
             busy_for_staff = [br for br in busy_list if br.get("Staff ID") == sid]
             is_free, conflicts, busy_overlaps = availability_for_req_dates(stats_entry, req_dates, busy_records=busy_for_staff)
             workshop_flag = is_workshop_designation(s.get("designation",""))
-            # status priority: busy_record > duty token > workshop > free
-            status = "free"
             blocked = False
+            status_text = "FREE"
+            emoji = "🟢"
             reason = ""
             if busy_overlaps:
-                status = "busy"
                 blocked = True
+                status_text = "BUSY"
+                emoji = "🔴"
                 reason = ",".join(busy_overlaps)
             elif conflicts:
-                status = "duty:" + ",".join(conflicts)
                 blocked = True
+                status_text = "DUTY"
+                emoji = "🔴"
                 reason = ",".join(conflicts)
             elif workshop_flag:
-                status = "workshop"
                 blocked = True
-                reason = "workshop designation"
-            label = f"{sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {status}"
-            candidates_out.append({
+                status_text = "WORKSHOP"
+                emoji = "🟡"
+                reason = "workshop"
+            label = f"{emoji} {sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{duty_count} — {status_text}"
+            out.append({
                 "staff_id": sid,
                 "label": label,
+                "blocked": blocked,
+                "status": status_text,
+                "reason": reason,
                 "duty_count": duty_count,
-                "is_free": is_free and (not busy_overlaps),
-                "conflicts": conflicts,
-                "busy_overlaps": busy_overlaps,
-                "INSTT": s.get("INSTT",""),
-                "dep_code": s.get("dep code",""),
                 "name": s.get("name",""),
                 "designation": s.get("designation",""),
-                "workshop": workshop_flag,
-                "blocked": blocked,
-                "block_reason": reason
+                "INSTT": s.get("INSTT",""),
+                "dep_code": s.get("dep code","")
             })
         # sort by duty_count then id
-        sorted_all = sorted(candidates_out, key=lambda x: (x["duty_count"], x["staff_id"]))
-        return sorted_all
+        return sorted(out, key=lambda x: (x["duty_count"], x["staff_id"]))
 
-    # Render candidates: for each panel row show full list with color badges and a selectbox that contains only allowed options (unless override_allow)
     if candidates.empty:
         st.info("No rows require EXTID (for selected filters).")
     else:
         for _, row in candidates.reset_index().iterrows():
             pidx = int(row["index"])
             subcode = row.get("SUBCODE","")
-            subname = get_subname(subcode)
+            subname = get_subname(subcode) if 'get_subname' in locals() else ""
             cols = st.columns([3,5,3,1,1])
             with cols[0]:
                 display_sub = f" — Subname: {subname}" if subname else ""
@@ -1139,73 +1129,23 @@ elif page == "EXTID Allocate":
                     f"**INT:** {int_display}"
                 )
             with cols[1]:
-                suggs = suggestions_for_row_with_stats(row)
-                if suggs:
-                    # Display colored candidate list (markdown with inline HTML badges)
-                    html_lines = []
-                    for c in suggs:
-                        badge = ""
-                        style = ""
-                        # red for busy/duty, yellow for workshop, green/neutral for free
-                        if c["blocked"]:
-                            if c["busy_overlaps"]:
-                                # busy
-                                style = "background:#ff9999;color:#000;padding:3px 8px;border-radius:4px;"
-                                badge = f"<span style='{style}'>BUSY</span>"
-                            elif c["conflicts"]:
-                                style = "background:#ff9999;color:#000;padding:3px 8px;border-radius:4px;"
-                                badge = f"<span style='{style}'>DUTY</span>"
-                            elif c["workshop"]:
-                                style = "background:#fff2cc;color:#000;padding:3px 8px;border-radius:4px;"
-                                badge = f"<span style='{style}'>WORKSHOP</span>"
-                            else:
-                                style = "background:#ff9999;color:#000;padding:3px 8px;border-radius:4px;"
-                                badge = f"<span style='{style}'>BLOCKED</span>"
-                        else:
-                            style = "background:#ccffcc;color:#000;padding:3px 8px;border-radius:4px;"
-                            badge = f"<span style='{style}'>FREE</span>"
-                        label_html = c["label"].replace("&","&amp;")
-                        # small reason text
-                        reason = c.get("block_reason","")
-                        reason_html = f" <small style='color:#666'>({reason})</small>" if reason else ""
-                        line = f"<div style='margin-bottom:6px'>{badge} &nbsp; <strong>{label_html}</strong>{reason_html}</div>"
-                        html_lines.append(line)
-                    st.markdown("".join(html_lines), unsafe_allow_html=True)
-                    # build selectbox options: include free ones; include blocked ones only if override_allow True
-                    selectable = []
-                    for c in suggs:
-                        if not c["blocked"] or override_allow:
-                            selectable.append(c["label"])
+                entries = build_candidate_entries_for_row(row)
+                if entries:
+                    # Build suggestion dropdown options with inline emoji/status
+                    sugg_options = [""] + [e["label"] for e in entries]
                     sel_key = f"sugg_{pidx}_select"
-                    if selectable:
-                        sel = st.selectbox(f"Select candidate to apply (Row {pidx})", options=[""] + selectable, key=sel_key)
-                    else:
-                        sel = ""
-                        st.caption("No selectable candidates (all are busy/duty/workshop). Toggle override to allow forced assignment.")
+                    sel = st.selectbox(f"Suggestions — Row {pidx}", options=sugg_options, key=sel_key)
                 else:
                     sel = ""
-                    st.caption("⚠️ No suggestions (free staff from same dept & different institute)")
+                    st.caption("No suggestions (no eligible staff found for filters).")
             with cols[2]:
-                # manual list: show full list with color badges same as suggestions; selection limited by override
-                d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
-                req_dates = [date_to_str(d) for d in daterange(d1, d2)] if (d1 and d2) else []
-                man_list_full = []
-                for c in suggestions_for_row_with_stats(row):
-                    # same label as earlier
-                    man_list_full.append(c)
-                # display small legend
-                st.markdown("<small>Legend: <span style='background:#ff9999;padding:3px 6px;border-radius:4px;'>RED = busy/duty (blocked)</span>  <span style='background:#fff2cc;padding:3px 6px;border-radius:4px;'>YELLOW = workshop (blocked)</span>  <span style='background:#ccffcc;padding:3px 6px;border-radius:4px;'>GREEN = free (selectable)</span></small>", unsafe_allow_html=True)
-                # build manual options only from man_list_full: include only non-blocked or if override_allow include all
-                manual_options = []
-                for c in man_list_full:
-                    if not c["blocked"] or override_allow:
-                        manual_options.append(c["label"])
-                man_key = f"man_{pidx}_select"
-                if manual_options:
-                    manual_sel = st.selectbox(f"Manual staff (Row {pidx})", options=[""] + manual_options, key=man_key)
+                entries = build_candidate_entries_for_row(row)
+                if entries:
+                    manual_options = [""] + [e["label"] for e in entries]
+                    man_key = f"man_{pidx}_select"
+                    manual_sel = st.selectbox(f"Manual — Row {pidx}", options=manual_options, key=man_key)
                 else:
                     manual_sel = ""
-                    st.caption("No manual selectable staff (all blocked). Toggle override to force select.")
             with cols[3]:
                 staged = st.session_state.panel_df.at[pidx,"EXTID"] if pidx in st.session_state.panel_df.index else ""
                 if staged and str(staged).strip() != "" and not is_zero_like(staged):
@@ -1215,7 +1155,7 @@ elif page == "EXTID Allocate":
             with cols[4]:
                 if st.button("Apply", key=f"apply_{pidx}"):
                     chosen_label = ""
-                    # prefer sel from suggestions selectbox, else manual_sel
+                    # preference: suggestion selectbox then manual
                     if 'sel' in locals() and sel and str(sel).strip() != "":
                         chosen_label = sel
                     elif 'manual_sel' in locals() and manual_sel and str(manual_sel).strip() != "":
@@ -1224,28 +1164,34 @@ elif page == "EXTID Allocate":
                         st.warning("Choose suggestion or manual staff.")
                         continue
 
-                    # extract staff id robustly (split at '—' dash)
+                    # extract staff id
                     parts = chosen_label.split("—")
                     if len(parts) == 0 or not parts[0].strip():
-                        st.error("Selected label does not contain a valid staff id.")
+                        st.error("Selected label does not contain staff id.")
                         continue
-                    staff_id_only = parts[0].strip()
-                    staff_id_only_norm = normalize_staff_id(staff_id_only)
+                    # first token includes emoji and id: e.g. "🟢 42218301 "
+                    first_token = parts[0].strip()
+                    # remove emoji prefix if present
+                    sid_candidate = first_token
+                    # remove any leading emoji and space
+                    sid_candidate = re.sub(r"^[^\w\d]+", "", sid_candidate).strip()
+                    staff_id_only_norm = normalize_staff_id(sid_candidate)
                     if not staff_id_only_norm:
-                        st.error("Selected staff ID is invalid (0 or blank). Please choose a valid staff.")
+                        st.error("Invalid staff id selected.")
                         continue
 
-                    # find the candidate entry to check blocked status
-                    cand_list = suggestions_for_row_with_stats(row)
-                    chosen_entry = None
-                    for c in cand_list:
-                        if c["staff_id"] == staff_id_only_norm:
-                            chosen_entry = c
-                            break
-                    if chosen_entry is not None:
-                        if chosen_entry["blocked"] and (not override_allow):
-                            st.error("Selected staff is blocked (busy/duty/workshop). Enable override to force assignment.")
-                            continue
+                    # find chosen entry to inspect blocked status
+                    entries = build_candidate_entries_for_row(row)
+                    chosen_entry = next((e for e in entries if e["staff_id"] == staff_id_only_norm), None)
+
+                    if chosen_entry is not None and chosen_entry["blocked"] and (not override_allow):
+                        st.error(f"Selected staff {staff_id_only_norm} is blocked ({chosen_entry['status']}). Enable override to force assign.")
+                        if pidx in st.session_state.panel_df.index:
+                            prev = st.session_state.panel_df.at[pidx, "ERROR"]
+                            newerr = (str(prev) + "; " if str(prev).strip() else "") + f"EXT apply blocked:{chosen_entry['status']}"
+                            st.session_state.panel_df.at[pidx, "ERROR"] = newerr
+                            persist_panel()
+                        continue
 
                     ins = str(row.get("INSCODE","")).strip()
                     d1 = parse_date_flexible(row.get("DATE_FROM")); d2 = parse_date_flexible(row.get("DATE_TO"))
@@ -1253,14 +1199,14 @@ elif page == "EXTID Allocate":
                         st.error("Invalid panel row dates or INSCODE — cannot apply.")
                         continue
 
-                    # build staff2 and ensure date cols
+                    # prepare staff2 and ensure date cols
                     staff2 = st.session_state.staff_df.copy()
                     for d in daterange(d1, d2):
                         dc = date_to_str(d)
                         if dc not in staff2.columns:
                             staff2[dc] = ""
 
-                    # Remove previous INSCODE tokens for this panel row across all staff (clean per-row)
+                    # remove previous INSCODE tokens for this panel row across all staff
                     staff2 = remove_inscode_from_staff_cells(staff2, ins, d1, d2)
 
                     # find or add staff row
@@ -1270,10 +1216,9 @@ elif page == "EXTID Allocate":
                         new["Staff ID"] = staff_id_only_norm
                         staff2 = concat_row(staff2, new)
                         mask = staff2["Staff ID"].astype(str).str.upper() == staff_id_only_norm.upper()
-
                     sidx = staff2[mask].index[0]
 
-                    # Check busy records first (explicit busy)
+                    # check explicit busy records
                     busy_for_this = [br for br in busy_list if br["Staff ID"] == staff_id_only_norm]
                     busy_conflicts = []
                     for br in busy_for_this:
@@ -1284,7 +1229,7 @@ elif page == "EXTID Allocate":
                                     busy_conflicts.append(f"{date_to_str(bfrom)}->{date_to_str(bto)}")
                                     break
                     if busy_conflicts and (not override_allow):
-                        st.error(f"Cannot apply EXTID {staff_id_only_norm}: busy on {', '.join(busy_conflicts)} (Busy record). Enable override to force.")
+                        st.error(f"Cannot apply EXTID {staff_id_only_norm}: busy on {', '.join(busy_conflicts)}. Enable override to force.")
                         if pidx in st.session_state.panel_df.index:
                             prev = st.session_state.panel_df.at[pidx, "ERROR"]
                             newerr = (str(prev) + "; " if str(prev).strip() else "") + f"EXT apply failed busy_rec:{','.join(busy_conflicts)}"
@@ -1292,7 +1237,7 @@ elif page == "EXTID Allocate":
                             persist_panel()
                         continue
 
-                    # Check availability via tokens (non-B)
+                    # check tokens (non-B)
                     busy_found = []
                     for d in daterange(d1, d2):
                         dc = date_to_str(d)
@@ -1309,7 +1254,7 @@ elif page == "EXTID Allocate":
                             persist_panel()
                         continue
 
-                    # Append INSCODE for each date to the chosen EXT staff (allow duplicates)
+                    # Append INSCODE for each date to chosen EXT staff
                     for d in daterange(d1, d2):
                         dc = date_to_str(d)
                         cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
@@ -1319,7 +1264,7 @@ elif page == "EXTID Allocate":
                         else:
                             staff2.at[sidx, dc] = cur_s + "," + ins
 
-                    # Also append to INTID (if present and valid)
+                    # Also append to INTID if present
                     intid = normalize_staff_id(row.get("INTID"))
                     if intid:
                         mask_i = staff2["Staff ID"].astype(str).str.upper() == intid.upper()
@@ -1338,20 +1283,19 @@ elif page == "EXTID Allocate":
                             else:
                                 staff2.at[iidx, dc] = cur_s + "," + ins
 
-                    # persist: set EXTID in authoritative panel row to normalized value
+                    # persist EXTID in panel row
                     if pidx in st.session_state.panel_df.index:
                         st.session_state.panel_df.at[pidx, "EXTID"] = staff_id_only_norm
                         prev_err = st.session_state.panel_df.at[pidx, "ERROR"]
                         if prev_err and "EXT apply failed" in prev_err:
                             parts = [pt for pt in str(prev_err).split(";") if "EXT apply failed" not in pt]
                             st.session_state.panel_df.at[pidx, "ERROR"] = ";".join([p.strip() for p in parts if p.strip()!=""])
-                        persist_panel()  # persist authoritative panel immediately
+                        persist_panel()
 
                     # persist staff
                     st.session_state.staff_df = staff2.copy()
                     persist_staff()
 
-                    # success message
                     st.success(f"✅ Applied EXTID {staff_id_only_norm} and saved. INSCODE {ins} marked for {date_to_str(d1)} → {date_to_str(d2)}")
 
         st.markdown("---")

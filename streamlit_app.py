@@ -1347,44 +1347,45 @@ elif page == "EXTID Allocate":
                     else:
                         st.error(msg)
 
-        # ----- BULK APPLY section -----
+               # ----- BULK APPLY (apply to ALL visible candidate rows) -----
         st.markdown("---")
         st.subheader("Bulk Apply")
-        st.markdown("Select multiple visible rows (left) and choose a free staff (right) to Bulk Apply the same EXTID to all selected rows. The same validations as single Apply will run for each row.")
-        col_b1, col_b2, col_b3 = st.columns([4,4,2])
+        st.markdown("Bulk Apply will apply the chosen free staff as EXTID to **ALL visible candidate rows** (honouring the current INSCODE / Dept / Date filters). The same validations as single Apply run for each row.")
+
+        col_b1, col_b2, col_b3 = st.columns([6,4,2])
         with col_b1:
-            selected_rows_for_bulk = st.multiselect("Select rows to Bulk Apply (visible candidates)", options=bulk_choices, default=[])
+            st.info(f"Visible candidate rows: {len(bulk_choices)} (these will all be processed when you click 'Bulk Apply to ALL visible rows').")
+            # show a small preview list
+            if bulk_choices:
+                st.write("Preview (first 10 visible rows):")
+                st.write("\n".join(bulk_choices[:10]))
+            else:
+                st.write("No visible candidate rows to apply.")
         with col_b2:
             # build a free-only staff selector for bulk apply (show emoji)
-            # we prepare an across-all candidates free list (staff free for at least one selected row isn't meaningful)
-            # instead we show all staff labelled with their overall free/busy label relative to the currently selected filter range (approx)
-            # For simplicity show staff that are globally free for the filter date range (if date filter present)
             bulk_staff_list = [""]
-            # determine a requested date range aggregated from filter or None
             if filter_from is not None and filter_to is not None:
                 agg_req_dates = [date_to_str(d) for d in daterange(filter_from, filter_to)]
             else:
-                # fallback: empty list (will mark most staff as free if no tokens exist)
                 agg_req_dates = []
             for s in staff_rows:
                 sid = s["Staff ID"]
                 avail_label, conflicts, busy_overlaps = build_avail_label_for_staff(sid, agg_req_dates)
-                # include only free staff in the bulk staff selector (per your request)
                 if avail_label == "free":
                     label_text = f"{sid} — {s.get('name','')} — {s.get('designation','')} — INST:{s.get('INSTT','')} — DEP:{s.get('dep code','')} — duties:{ staff_stats.get(sid, {}).get('duty_count',0) }"
                     bulk_staff_list.append(label_with_status_emoji(avail_label, label_text))
-            bulk_staff_sel = st.selectbox("Choose free staff to bulk apply", options=bulk_staff_list, key="bulk_staff_sel")
+            bulk_staff_sel = st.selectbox("Choose free staff to Bulk Apply to ALL visible rows", options=bulk_staff_list, key="bulk_staff_sel")
         with col_b3:
-            if st.button("Bulk Apply to selected rows"):
-                if not selected_rows_for_bulk:
-                    st.warning("Select at least one row for bulk apply.")
-                elif not bulk_staff_sel or str(bulk_staff_sel).strip()=="":
+            if st.button("Bulk Apply to ALL visible rows"):
+                if not bulk_choices:
+                    st.warning("No visible candidate rows to bulk-apply.")
+                elif not bulk_staff_sel or str(bulk_staff_sel).strip() == "":
                     st.warning("Choose a free staff for bulk apply.")
                 else:
-                    # perform bulk apply: iterate selected rows and call apply_ext_for_panel_row
+                    # apply to every visible candidate row (use row_display_map to find pidx)
                     success_count = 0
                     fail_list = []
-                    for sel_item in selected_rows_for_bulk:
+                    for sel_item in bulk_choices:
                         pidx = row_display_map.get(sel_item)
                         if pidx is None:
                             fail_list.append({"row": sel_item, "reason": "not found"})
@@ -1395,55 +1396,9 @@ elif page == "EXTID Allocate":
                         else:
                             fail_list.append({"row": pidx, "reason": msg})
                     if success_count:
-                        st.success(f"Bulk apply succeeded for {success_count} rows.")
+                        st.success(f"Bulk apply succeeded for {success_count} rows (of {len(bulk_choices)} visible rows).")
                     if fail_list:
                         st.error(f"Bulk apply failed for {len(fail_list)} rows.")
                         st.dataframe(pd.DataFrame(fail_list))
-
-        st.markdown("---")
-        if st.button("Commit staged EXTIDs to Staffdata"):
-            panel2 = st.session_state.panel_df.copy()
-            staff2 = st.session_state.staff_df.copy()
-            staff_map = {}
-            for idx_s, r in staff2.iterrows():
-                sid_norm = normalize_staff_id(r.get("Staff ID"))
-                if sid_norm:
-                    staff_map[sid_norm] = idx_s
-
-            fails = []
-            commits = 0
-            for idx, r in panel2.iterrows():
-                ext_raw = str(r.get("EXTID","")).strip()
-                ext_norm = normalize_staff_id(ext_raw)
-                if not ext_norm:
-                    fails.append({"panel_index": idx, "staff": ext_raw, "reason": "invalid_staff_id"})
-                    continue
-                ins = str(r.get("INSCODE","")).strip()
-                d1 = parse_date_flexible(r.get("DATE_FROM")); d2 = parse_date_flexible(r.get("DATE_TO"))
-                for d in daterange(d1, d2):
-                    dc = date_to_str(d)
-                    if dc not in staff2.columns:
-                        staff2[dc] = ""
-                    if ext_norm not in staff_map:
-                        new = {c:"" for c in staff2.columns}
-                        new["Staff ID"] = ext_norm
-                        staff2 = concat_row(staff2, new)
-                        staff_map[ext_norm] = staff2.index.max()
-                    sidx = staff_map[ext_norm]
-                    cur = staff2.at[sidx, dc] if dc in staff2.columns else ""
-                    if split_tokens(cur):
-                        fails.append({"panel_index": idx, "staff": ext_norm, "date": dc, "reason":"busy"})
-                    else:
-                        if cur is None or str(cur).strip()=="":
-                            staff2.at[sidx, dc] = ins
-                        else:
-                            staff2.at[sidx, dc] = str(cur).strip() + "," + ins
-                        commits += 1
-            st.session_state.staff_df = staff2.copy()
-            persist_staff()
-            st.success(f"Committed {commits} appended duties.")
-            if fails:
-                st.error(f"{len(fails)} commits failed (invalid ids or busy).")
-                st.dataframe(pd.DataFrame(fails))
 
 # ---------- END ----------

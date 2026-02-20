@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# streamlit_app.py  — Duty Manager v3
+# streamlit_app.py — Duty Manager v3
 """
 Practical Exam Panel Scheduling System
 Created by MUTHUMANI S, LECTURER-EEE, GPT KARUR | 9443100811
 """
 from __future__ import annotations
-import os, uuid, io, traceback, base64
+import os, uuid, io, base64
 from datetime import datetime, timedelta, date
 import re
 import streamlit as st
@@ -19,165 +19,221 @@ try:
     from reportlab.lib.units import cm
     from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
                                      Paragraph, Spacer, PageBreak)
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.lib.enums import TA_CENTER
     RPDF = True
 except ImportError:
     RPDF = False
 
-# ══════════════════════════════════════════════
+# ══════════════════════════════════════════════════════
 # CONFIG
-# ══════════════════════════════════════════════
-DATA_DIR          = "data"
-PANEL_PATH        = os.path.join(DATA_DIR, "panel.csv")
-PANEL_DATED_PATH  = os.path.join(DATA_DIR, "panel_dated.csv")
-STAFF_PATH        = os.path.join(DATA_DIR, "staff.csv")
-SUBMAP_PATH       = os.path.join(DATA_DIR, "submap.csv")
-SUBJMAP_PATH      = os.path.join(DATA_DIR, "subjmap.csv")
+# ══════════════════════════════════════════════════════
+DATA_DIR         = "data"
+PANEL_PATH       = os.path.join(DATA_DIR, "panel.csv")
+PANEL_DATED_PATH = os.path.join(DATA_DIR, "panel_dated.csv")
+STAFF_PATH       = os.path.join(DATA_DIR, "staff.csv")
+SUBMAP_PATH      = os.path.join(DATA_DIR, "submap.csv")
+SUBJMAP_PATH     = os.path.join(DATA_DIR, "subjmap.csv")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 CREATOR = "MUTHUMANI S | LECTURER-EEE | GPT KARUR | 9443100811"
-PANEL_COLS        = ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID","ERROR","__rowid"]
-PANEL_DATED_COLS  = ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID","DATE_FROM","DATE_TO","ERROR","__rowid"]
-STAFF_COLS        = ["Staff ID","INSTT","Name of the Staff","Department","dep code","Designation","Phone","__rowid"]
-SUBJMAP_COLS      = ["Staff_Last_Staff_ID","Staff_Name","Department","Department_Code",
-                     "Subject_Type","Subject_Code","Subject_Name","Subject_Remarks"]
 
-st.set_page_config(page_title="Duty Manager", page_icon="🗂️", layout="wide",
-                   initial_sidebar_state="expanded")
+PANEL_COLS       = ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID","ERROR","__rowid"]
+PANEL_DATED_COLS = ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID","DATE_FROM","DATE_TO","ERROR","__rowid"]
+STAFF_COLS       = ["Staff ID","INSTT","Name of the Staff","Department","dep code","Designation","Phone","__rowid"]
+SUBJMAP_COLS     = ["Staff_Last_Staff_ID","Staff_Name","Department","Department_Code",
+                    "Subject_Type","Subject_Code","Subject_Name","Subject_Remarks"]
 
-# ══════════════════════════════════════════════
-# CSS — PROFESSIONAL DARK UI
-# ══════════════════════════════════════════════
+st.set_page_config(page_title="Duty Manager", page_icon="🗂️",
+                   layout="wide", initial_sidebar_state="collapsed")
+
+# ══════════════════════════════════════════════════════
+# CSS — TOP NAV + PROFESSIONAL THEME
+# ══════════════════════════════════════════════════════
 st.markdown("""
 <style>
-/* ── Sidebar overall ── */
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg,#0d0d1a 0%,#111827 50%,#0a0f1e 100%) !important;
-    border-right: 1px solid #1e293b;
-}
-[data-testid="stSidebar"] * { color:#cbd5e1 !important; }
+/* ── Hide default sidebar & header ── */
+[data-testid="stSidebar"]          { display: none !important; }
+[data-testid="collapsedControl"]   { display: none !important; }
+header[data-testid="stHeader"]     { display: none !important; }
+#MainMenu                          { display: none !important; }
+footer                             { display: none !important; }
 
-/* ── Nav buttons ── */
-div[data-testid="stSidebar"] .stButton > button {
-    width: 100% !important;
+/* ── Full-width layout ── */
+.main .block-container {
+    padding: 0 1.5rem 2rem !important;
+    max-width: 100% !important;
+}
+
+/* ── TOP NAVBAR ── */
+.topbar {
+    background: #0d1117;
+    border-bottom: 1px solid #21262d;
+    padding: 0 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
+    position: sticky;
+    top: 0;
+    z-index: 9999;
+    margin: 0 -1.5rem 1.2rem;
+}
+.topbar-brand {
+    display: flex; align-items: center; gap: 10px;
+    text-decoration: none;
+}
+.topbar-logo {
+    background: linear-gradient(135deg,#6366f1,#8b5cf6);
+    border-radius: 8px; padding: 6px 8px;
+    font-size: 1.2rem; line-height: 1;
+}
+.topbar-title {
+    color: #e6edf3; font-weight: 700; font-size: 1rem; line-height: 1.1;
+}
+.topbar-sub {
+    color: #6e7681; font-size: .7rem; font-weight: 400;
+}
+.topbar-creator {
+    color: #6e7681; font-size: .72rem;
+    background: #161b22; border: 1px solid #21262d;
+    border-radius: 20px; padding: 3px 12px;
+    white-space: nowrap;
+}
+
+/* ── TAB NAV ── */
+.stTabs { margin-top: 0 !important; }
+.stTabs [data-baseweb="tab-list"] {
+    background: #0d1117 !important;
+    border-bottom: 1px solid #21262d !important;
+    gap: 0 !important;
+    padding: 0 4px !important;
+    margin: -1rem -1.5rem 1.2rem !important;
+    overflow-x: auto !important;
+}
+.stTabs [data-baseweb="tab"] {
     background: transparent !important;
+    color: #8b949e !important;
     border: none !important;
-    border-radius: 10px !important;
-    color: #94a3b8 !important;
-    font-size: 0.88rem !important;
-    font-weight: 500 !important;
-    text-align: left !important;
-    padding: 11px 16px !important;
-    margin: 2px 0 !important;
-    transition: all .2s ease !important;
-    letter-spacing: .3px !important;
+    border-bottom: 2px solid transparent !important;
+    border-radius: 0 !important;
+    font-size: .88rem !important;
+    font-weight: 600 !important;
+    padding: 14px 22px !important;
+    transition: all .15s !important;
+    white-space: nowrap !important;
 }
-div[data-testid="stSidebar"] .stButton > button:hover {
-    background: rgba(99,102,241,0.18) !important;
-    color: #c7d2fe !important;
-    padding-left: 22px !important;
+.stTabs [data-baseweb="tab"]:hover {
+    color: #e6edf3 !important;
+    background: #161b22 !important;
 }
-
-/* Active nav item class applied via markdown */
-.nav-active {
-    background: linear-gradient(90deg,rgba(99,102,241,.45),rgba(139,92,246,.25)) !important;
-    border-left: 3px solid #818cf8 !important;
-    border-radius: 10px;
-    padding: 11px 16px;
-    color: #e0e7ff !important;
-    font-weight: 700;
-    font-size: .88rem;
-    display: block;
-    margin: 2px 0;
-    cursor: default;
-    letter-spacing: .3px;
+.stTabs [aria-selected="true"] {
+    color: #6366f1 !important;
+    border-bottom-color: #6366f1 !important;
+    background: transparent !important;
 }
-.nav-inactive {
-    border-left: 3px solid transparent;
-    border-radius: 10px;
-    padding: 11px 16px;
-    color: #64748b;
-    font-size: .88rem;
-    display: block;
-    margin: 2px 0;
-    cursor: pointer;
+[data-testid="stTabsContent"] {
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
 }
 
-/* ── Sidebar stat pills ── */
-.stat-pill {
-    display:flex; justify-content:space-between; align-items:center;
-    background:rgba(255,255,255,.04);
-    border-radius:8px; padding:6px 12px; margin:3px 0; font-size:.78rem;
-    border:1px solid rgba(255,255,255,.06);
+/* ── INNER TABS (sub tabs inside pages) ── */
+.inner-tabs .stTabs [data-baseweb="tab-list"] {
+    background: #161b22 !important;
+    border: 1px solid #21262d !important;
+    border-radius: 8px !important;
+    margin: 0 0 12px !important;
+    padding: 4px !important;
 }
-.stat-pill .sv { font-weight:700; font-size:.95rem; color:#a5b4fc; }
+.inner-tabs .stTabs [data-baseweb="tab"] {
+    border-radius: 6px !important;
+    padding: 7px 16px !important;
+    font-size: .83rem !important;
+}
+.inner-tabs .stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg,#6366f1,#8b5cf6) !important;
+    color: white !important;
+    border-bottom-color: transparent !important;
+}
 
-/* ── Section headers ── */
-.section-hdr {
-    background: linear-gradient(90deg,#4f46e5,#7c3aed);
-    color:white !important; padding:9px 18px; border-radius:9px;
-    font-weight:700; font-size:1rem; margin:12px 0 8px;
-    letter-spacing:.3px;
+/* ── QUICK STATS BAR ── */
+.statsbar {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    background: #0d1117; border-bottom: 1px solid #21262d;
+    padding: 8px 20px;
+    margin: 0 -1.5rem 1.2rem;
+}
+.stat-chip {
+    background: #161b22; border: 1px solid #21262d;
+    border-radius: 6px; padding: 4px 12px;
+    font-size: .75rem; color: #8b949e;
+    white-space: nowrap;
+}
+.stat-chip b { font-size: .88rem; }
+
+/* ── SECTION HEADERS ── */
+.sec-hdr {
+    background: linear-gradient(90deg,#6366f1,#8b5cf6);
+    color: white; padding: 7px 16px; border-radius: 7px;
+    font-weight: 700; font-size: .95rem;
+    margin: 10px 0 8px; display:flex; align-items:center; gap:8px;
 }
 .sub-hdr {
-    background: rgba(99,102,241,.12);
-    border-left:3px solid #6366f1;
-    color:#c7d2fe !important; padding:7px 14px; border-radius:0 8px 8px 0;
-    font-weight:600; font-size:.9rem; margin:8px 0 5px;
+    color: #e6edf3; font-size: .9rem; font-weight: 600;
+    padding-bottom: 5px; border-bottom: 1px solid #21262d; margin: 8px 0 6px;
 }
 
-/* ── Cards ── */
-.err-card  { background:#1f0f0f; border-left:4px solid #ef4444; border-radius:8px;
-    padding:8px 14px; margin:4px 0; font-size:.83rem; color:#fca5a5 !important; }
-.ok-card   { background:#0d1f0d; border-left:4px solid #22c55e; border-radius:8px;
-    padding:8px 14px; margin:4px 0; font-size:.83rem; color:#86efac !important; }
-.info-card { background:#0f172a; border-left:4px solid #38bdf8; border-radius:8px;
-    padding:8px 14px; margin:4px 0; font-size:.83rem; color:#bae6fd !important; }
-.row-card  { background:#1e293b; border-left:4px solid #6366f1; border-radius:8px;
-    padding:9px 14px; margin:5px 0; }
+/* ── CARDS ── */
+.card       { background:#161b22;border:1px solid #21262d;border-radius:10px;padding:14px 16px;margin:6px 0; }
+.err-card   { background:#2d1515;border-left:3px solid #ef4444;border-radius:6px;padding:8px 12px;margin:3px 0;font-size:.83rem;color:#fca5a5; }
+.ok-card    { background:#0d2218;border-left:3px solid #22c55e;border-radius:6px;padding:8px 12px;margin:3px 0;font-size:.85rem;color:#86efac; }
+.warn-card  { background:#2a1f0a;border-left:3px solid #f59e0b;border-radius:6px;padding:8px 12px;margin:3px 0;font-size:.83rem;color:#fcd34d; }
+.info-card  { background:#0c1a2e;border-left:3px solid #3b82f6;border-radius:6px;padding:8px 12px;margin:3px 0;font-size:.83rem;color:#93c5fd; }
 
-/* ── Metric grid ── */
-.metrics-row { display:flex; gap:10px; flex-wrap:wrap; margin:8px 0; }
-.metric-box {
-    flex:1; min-width:110px;
-    background:linear-gradient(135deg,rgba(99,102,241,.2),rgba(139,92,246,.1));
-    border:1px solid rgba(99,102,241,.3); border-radius:10px;
-    padding:10px 14px; text-align:center;
+/* ── BUTTONS ── */
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg,#6366f1,#8b5cf6) !important;
+    border: none !important; border-radius: 7px !important;
+    font-weight: 600 !important; color: white !important;
 }
-.metric-box .mv { font-size:1.7rem; font-weight:700; color:#a5b4fc; }
-.metric-box .ml { font-size:.72rem; color:#94a3b8; margin-top:2px; }
-
-/* ── Download button links ── */
-.dl-btn {
-    display:inline-block; padding:7px 18px; border-radius:8px;
-    text-decoration:none; font-size:.82rem; font-weight:600;
-    margin:3px; transition:opacity .2s;
+.stButton > button[kind="secondary"] {
+    background: #161b22 !important; border: 1px solid #30363d !important;
+    color: #e6edf3 !important; border-radius: 7px !important;
 }
-.dl-btn:hover { opacity:.8; }
+.stButton > button { font-size:.85rem !important; }
 
-/* ── Tab style ── */
-[data-testid="stTab"] { font-weight:600 !important; }
+/* ── DATA EDITOR / FRAME ── */
+div[data-testid="stDataFrame"],
+div[data-testid="stDataEditor"]   { border-radius: 8px !important; overflow: hidden !important; }
 
-/* ── Creator footer ── */
-.creator-bar {
-    background:linear-gradient(90deg,#0f172a,#1e293b);
-    border-top:1px solid #334155; padding:8px 18px;
-    text-align:center; font-size:.75rem; color:#64748b; border-radius:0 0 10px 10px;
-    margin-top:16px;
-}
+/* ── INPUTS ── */
+.stTextInput input       { background:#161b22 !important;border:1px solid #30363d !important;color:#e6edf3 !important;border-radius:6px !important; }
+.stSelectbox > div > div { background:#161b22 !important;border:1px solid #30363d !important;color:#e6edf3 !important;border-radius:6px !important; }
 
-/* ── Main bg ── */
-.stApp { background:#0f172a; }
-.block-container { padding-top:1rem !important; }
-div[data-testid="stDataFrame"] { border-radius:10px; overflow:hidden; }
+/* ── EXPANDER ── */
+.streamlit-expanderHeader { background:#161b22 !important;border-radius:8px !important;border:1px solid #21262d !important;color:#e6edf3 !important; }
+details[data-testid="stExpander"] summary p { color:#e6edf3 !important; }
 
-hr.thin { border:none; border-top:1px solid #1e293b; margin:6px 0; }
+/* ── METRICS ── */
+[data-testid="stMetric"] { background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px 14px; }
+[data-testid="stMetricLabel"] p { color:#8b949e !important;font-size:.78rem !important; }
+[data-testid="stMetricValue"]   { color:#e6edf3 !important; }
+
+/* ── CODE BLOCKS ── */
+.stCode code { background:#0d1117 !important;color:#79c0ff !important;font-size:.78rem !important; }
+
+/* ── GENERAL TEXT ── */
+p, li, span, label { color: #c9d1d9 !important; }
+h1,h2,h3           { color: #e6edf3 !important; }
+.stMarkdown         { color: #c9d1d9 !important; }
+
+hr.thin { border:none;border-top:1px solid #21262d;margin:8px 0; }
 </style>
 """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════
+# ══════════════════════════════════════════════════════
 # HELPERS
-# ══════════════════════════════════════════════
+# ══════════════════════════════════════════════════════
 def parse_date(s):
     if s is None: return None
     try:
@@ -197,10 +253,6 @@ def d2s(d):
     if d is None: return ""
     if isinstance(d,(datetime,pd.Timestamp)): d=d.date()
     return d.strftime("%d.%m.%Y")
-
-def drange(s,e):
-    d=s
-    while d<=e: yield d; d+=timedelta(days=1)
 
 def rowid(df,pre="r"):
     df=df.copy()
@@ -226,17 +278,7 @@ def save_csv(df,path):
     try: df.to_csv(path,index=False); return True
     except Exception as e: st.error(f"Save failed: {e}"); return False
 
-def concat_r(df,d): return pd.concat([df,pd.DataFrame([d])],ignore_index=True)
-
 SPLIT_RE=re.compile(r"[,\uFF0C;|\-/\\_\s]+")
-def split_toks(v):
-    if v is None: return []
-    s=str(v).strip()
-    return [p.strip() for p in SPLIT_RE.split(s) if p.strip()] if s else []
-
-def is_busy(t):
-    t2=str(t).strip().upper()
-    return t2=="B" or bool(re.match(r"^B[\W_]*\d+$",t2))
 
 def norm_id(v):
     if v is None: return ""
@@ -254,58 +296,61 @@ def norm_id(v):
 
 def is_zero(v): return str(v).strip() in ("0","0.0","0.00") if v else False
 
+def split_toks(v):
+    if not v: return []
+    s=str(v).strip()
+    if not s: return []
+    return [p.strip() for p in SPLIT_RE.split(s) if p.strip()]
+
+def is_busy(t):
+    t2=str(t).strip().upper()
+    return t2=="B" or bool(re.match(r"^B[\W_]*\d+$",t2))
+
 def inscode_from_sid(sid):
     s=str(sid).strip()
     return s[1:4] if len(s)>=4 else ""
 
-def get_name(sdf,sid):
+def get_name(sf,sid):
     sid=norm_id(sid)
-    if not sid: return ""
-    m=sdf["Staff ID"].astype(str).str.upper()==sid
-    if m.any():
-        try: return str(sdf.loc[m,"Name of the Staff"].iloc[0])
-        except: return ""
+    if not sid or sf.empty: return ""
+    try:
+        m=sf["Staff ID"].astype(str).str.upper()==sid
+        if m.any(): return str(sf.loc[m,"Name of the Staff"].iloc[0])
+    except: pass
     return ""
 
-def get_phone(sdf,sid):
+def get_phone(sf,sid):
     sid=norm_id(sid)
-    if not sid: return ""
-    m=sdf["Staff ID"].astype(str).str.upper()==sid
-    if m.any():
-        try: return str(sdf.loc[m,"Phone"].iloc[0])
-        except: return ""
+    if not sid or sf.empty: return ""
+    try:
+        m=sf["Staff ID"].astype(str).str.upper()==sid
+        if m.any(): return str(sf.loc[m,"Phone"].iloc[0])
+    except: pass
     return ""
 
-def get_subname(submap,code):
-    if submap is None or submap.empty: return ""
-    m=submap[submap["SUBCODE"].astype(str)==str(code).strip()]
+def get_subname(sm,code):
+    if sm is None or sm.empty: return ""
+    m=sm[sm["SUBCODE"].astype(str)==str(code).strip()]
     return m.iloc[0]["SUBNAME"] if not m.empty else ""
 
-def duty_stats(sdf):
-    stats={}
-    if sdf is None or sdf.empty: return stats
-    dcols=[c for c in sdf.columns if c!="__rowid" and isinstance(c,str)
-           and len(c.split("."))==3 and all(p.isdigit() for p in c.split("."))]
-    for _,row in sdf.iterrows():
-        sid=norm_id(row.get("Staff ID"))
-        if not sid: continue
-        dm,cnt={},0
-        for dc in dcols:
-            toks=split_toks(row.get(dc,""))
-            dm[dc]=toks; cnt+=sum(1 for t in toks if not is_busy(t))
-        stats[sid]={"count":cnt,"dm":dm,
-            "INSTT":row.get("INSTT",""),"dep":row.get("dep code",""),
-            "name":row.get("Name of the Staff",""),"desig":row.get("Designation",""),
-            "phone":row.get("Phone","")}
-    return stats
+def dl_link(df,fname,label,color="#6366f1"):
+    csv=df.to_csv(index=False).encode()
+    b64=base64.b64encode(csv).decode()
+    return (f'<a href="data:file/csv;base64,{b64}" download="{fname}" '
+            f'style="background:{color};color:#fff;padding:6px 14px;'
+            f'border-radius:6px;text-decoration:none;font-size:.8rem;'
+            f'display:inline-block;margin:2px 4px 2px 0;font-weight:600">{label}</a>')
 
-# ══════════════════════════════════════════════
+def pdf_dl_link(pdf_b,fname,label):
+    b64=base64.b64encode(pdf_b).decode()
+    return (f'<a href="data:application/pdf;base64,{b64}" download="{fname}" '
+            f'style="background:#ef4444;color:#fff;padding:6px 14px;'
+            f'border-radius:6px;text-decoration:none;font-size:.8rem;'
+            f'display:inline-block;margin:2px 4px 2px 0;font-weight:600">{label}</a>')
+
+# ══════════════════════════════════════════════════════
 # SESSION STATE
-# ══════════════════════════════════════════════
-if "nav" not in st.session_state: st.session_state.nav="upload"
-if "staged" not in st.session_state: st.session_state.staged={}
-if "errors" not in st.session_state: st.session_state.errors={}
-
+# ══════════════════════════════════════════════════════
 for key,path,cols,pre in [
     ("panel",  PANEL_PATH,       PANEL_COLS,       "p"),
     ("pdate",  PANEL_DATED_PATH, PANEL_DATED_COLS, "d"),
@@ -318,8 +363,7 @@ for key,path,cols,pre in [
         st.session_state[key]=df.copy()
 
 if "submap" not in st.session_state:
-    sm=load_csv(SUBMAP_PATH,["SUBCODE","SUBNAME"])
-    st.session_state.submap=sm.copy()
+    st.session_state.submap=load_csv(SUBMAP_PATH,["SUBCODE","SUBNAME"]).copy()
 
 if "ssmap" not in st.session_state:
     sm2=load_csv(SUBJMAP_PATH,SUBJMAP_COLS)
@@ -327,27 +371,47 @@ if "ssmap" not in st.session_state:
         if c not in sm2.columns: sm2[c]=""
     st.session_state.ssmap=sm2.copy()
 
-def P():  st.session_state.panel=rowid(st.session_state.panel,"p");  save_csv(st.session_state.panel,PANEL_PATH)
-def PD(): st.session_state.pdate=rowid(st.session_state.pdate,"d");  save_csv(st.session_state.pdate,PANEL_DATED_PATH)
-def S():  st.session_state.staff=rowid(st.session_state.staff,"s");  save_csv(st.session_state.staff,STAFF_PATH)
+if "staged" not in st.session_state: st.session_state.staged={}
+if "errors" not in st.session_state: st.session_state.errors={}
+
+def P():  st.session_state.panel=rowid(st.session_state.panel,"p"); save_csv(st.session_state.panel,PANEL_PATH)
+def PD(): st.session_state.pdate=rowid(st.session_state.pdate,"d"); save_csv(st.session_state.pdate,PANEL_DATED_PATH)
+def S():  st.session_state.staff=rowid(st.session_state.staff,"s"); save_csv(st.session_state.staff,STAFF_PATH)
 def SM(): save_csv(st.session_state.submap,SUBMAP_PATH)
 def SS(): save_csv(st.session_state.ssmap,SUBJMAP_PATH)
 
-# ══════════════════════════════════════════════
-# LOGIC — EXT SUGGESTIONS & AUTO-ALLOCATE
-# ══════════════════════════════════════════════
-def ext_suggs(panel_row, sdf, ssmap):
+# ══════════════════════════════════════════════════════
+# LOGIC
+# ══════════════════════════════════════════════════════
+def duty_stats(sf):
+    stats={}
+    if sf is None or sf.empty: return stats
+    dcols=[c for c in sf.columns if c!="__rowid" and isinstance(c,str)
+           and len(c.split("."))==3 and all(p.isdigit() for p in c.split("."))]
+    for _,row in sf.iterrows():
+        sid=norm_id(row.get("Staff ID"))
+        if not sid: continue
+        dm,cnt={},0
+        for dc in dcols:
+            toks=split_toks(row.get(dc,""))
+            dm[dc]=toks; cnt+=sum(1 for t in toks if not is_busy(t))
+        stats[sid]={"count":cnt,"dm":dm,"INSTT":row.get("INSTT",""),
+                    "dep":row.get("dep code",""),"name":row.get("Name of the Staff",""),
+                    "desig":row.get("Designation",""),"phone":row.get("Phone","")}
+    return stats
+
+def ext_suggestions(panel_row,sf,ssmap):
     panel_ins=str(panel_row.get("INSCODE","")).strip()
-    subcode  =str(panel_row.get("SUBCODE","")).strip().upper()
+    subcode=str(panel_row.get("SUBCODE","")).strip().upper()
     panel_dep=str(panel_row.get("NCNO","")).strip()
-    stats    =duty_stats(sdf)
+    stats=duty_stats(sf)
     if ssmap is not None and not ssmap.empty:
-        mapped   =ssmap[ssmap["Subject_Code"].astype(str).str.strip().str.upper()==subcode]
+        mapped=ssmap[ssmap["Subject_Code"].astype(str).str.strip().str.upper()==subcode]
         mapped_ids=set(mapped["Staff_Last_Staff_ID"].apply(norm_id).unique())
     else:
         mapped_ids=None
     results=[]
-    for _,row in sdf.iterrows():
+    for _,row in sf.iterrows():
         sid=norm_id(row.get("Staff ID"))
         if not sid: continue
         instt=str(row.get("INSTT","")).strip()
@@ -359,239 +423,186 @@ def ext_suggs(panel_row, sdf, ssmap):
             if dep!=panel_dep: continue
         se=stats.get(sid,{})
         results.append({"sid":sid,"name":row.get("Name of the Staff",""),
-            "desig":row.get("Designation",""),"instt":instt,
-            "dep":dep,"phone":row.get("Phone",""),"count":se.get("count",0)})
+                        "desig":row.get("Designation",""),"instt":instt,
+                        "dep":dep,"phone":row.get("Phone",""),"count":se.get("count",0)})
     results.sort(key=lambda x:x["count"])
     return results
 
 def make_lbl(s): return f"🟢 {s['sid']} — {s['name']} — {s['desig']} — {s['instt']}"
 
-def auto_allocate(candidates, sdf, ssmap):
-    res,skip={},{}
+def auto_allocate(candidates,sf,ssmap):
+    results,skipped={},{}
     for pidx,row in candidates.iterrows():
-        suggs=ext_suggs(row,sdf,ssmap)
-        if suggs: res[pidx]=make_lbl(suggs[0])
-        else: skip[pidx]=f"No eligible external for SUBCODE {str(row.get('SUBCODE','')).strip()}"
-    return res,skip
+        suggs=ext_suggestions(row,sf,ssmap)
+        if suggs: results[pidx]=make_lbl(suggs[0])
+        else: skipped[pidx]=f"No eligible external staff for SUBCODE {row.get('SUBCODE','?')}"
+    return results,skipped
 
-# ══════════════════════════════════════════════
-# ERROR CHECK (dated panel)
-# ══════════════════════════════════════════════
-def check_errors(panel_df, sdf):
-    errs={i:[] for i in panel_df.index}
+def check_errors(pdf,sf):
+    errs={i:[] for i in pdf.index}
     staff_duties={}
-    for idx,row in panel_df.iterrows():
+    for idx,row in pdf.iterrows():
         d1=parse_date(row.get("DATE_FROM")); d2=parse_date(row.get("DATE_TO"))
-        sc=str(row.get("SUBCODE","")).strip(); ins=str(row.get("INSCODE","")).strip()
+        sc=str(row.get("SUBCODE","")).strip()
+        ins=str(row.get("INSCODE","")).strip()
         for role,fld in [("INT","INTID"),("EXT","EXTID")]:
             sid=norm_id(row.get(fld,""))
             if is_zero(row.get(fld,"")): sid=""
             if not sid: continue
             staff_ins=inscode_from_sid(sid)
             if role=="INT" and staff_ins and staff_ins!=ins:
-                errs[idx].append(f"❌ INTID {sid}: home-inst {staff_ins} ≠ exam-inst {ins} (must be same)")
+                errs[idx].append(f"❌ INTID {sid}: home {staff_ins} ≠ exam {ins}")
             if role=="EXT" and staff_ins and staff_ins==ins:
-                errs[idx].append(f"❌ EXTID {sid}: home-inst {staff_ins} == exam-inst {ins} (must differ)")
+                errs[idx].append(f"❌ EXTID {sid}: home {staff_ins} == exam {ins} (must differ)")
             staff_duties.setdefault(sid,[]).append((idx,sc,d1,d2,role))
     for sid,duties in staff_duties.items():
         for i in range(len(duties)):
-            idx_a,sc_a,d1_a,d2_a,_=duties[i]
-            if d1_a is None or d2_a is None: continue
+            ia,sca,d1a,d2a,ra=duties[i]
+            if d1a is None or d2a is None: continue
             for j in range(i+1,len(duties)):
-                idx_b,sc_b,d1_b,d2_b,_=duties[j]
-                if d1_b is None or d2_b is None: continue
-                if max(d1_a,d1_b)<=min(d2_a,d2_b) and sc_a!=sc_b:
-                    msg=(f"⚠️ CLASH {sid}: {sc_a}({d2s(d1_a)}→{d2s(d2_a)}) "
-                         f"overlaps {sc_b}({d2s(d1_b)}→{d2s(d2_b)})")
-                    errs[idx_a].append(msg); errs[idx_b].append(msg)
+                ib,scb,d1b,d2b,rb=duties[j]
+                if d1b is None or d2b is None: continue
+                os_=max(d1a,d1b); oe_=min(d2a,d2b)
+                if os_<=oe_ and sca!=scb:
+                    msg=f"⚠️ {sid} CLASH: {sca}({d2s(d1a)}→{d2s(d2a)}) overlaps {scb}({d2s(d1b)}→{d2s(d2b)})"
+                    errs[ia].append(msg); errs[ib].append(msg)
     return {k:v for k,v in errs.items() if v}
 
-# ══════════════════════════════════════════════
+# ══════════════════════════════════════════════════════
 # PDF
-# ══════════════════════════════════════════════
-def gen_pdf(panel_df, sdf, submap):
+# ══════════════════════════════════════════════════════
+def generate_pdf(panel_df,sf,submap):
     buf=BytesIO()
-    if not RPDF: buf.write(b"Install reportlab: pip install reportlab"); return buf.getvalue()
+    if not RPDF:
+        buf.write(b"Install: pip install reportlab"); return buf.getvalue()
     doc=SimpleDocTemplate(buf,pagesize=A4,
         leftMargin=1.5*cm,rightMargin=1.5*cm,topMargin=1.5*cm,bottomMargin=1.5*cm)
-    styles=getSampleStyleSheet()
-    H1=ParagraphStyle("H1",fontSize=13,fontName="Helvetica-Bold",spaceAfter=4,alignment=TA_CENTER)
-    SM_=ParagraphStyle("SM",fontSize=7.5,fontName="Helvetica",spaceAfter=2)
-    FOOT=ParagraphStyle("FOOT",fontSize=7,fontName="Helvetica",textColor=RC.grey,alignment=TA_CENTER)
+    sty=getSampleStyleSheet()
+    H1 =ParagraphStyle("H1", fontSize=12,fontName="Helvetica-Bold",spaceAfter=4,alignment=TA_CENTER)
+    SML=ParagraphStyle("SML",fontSize=7, fontName="Helvetica",textColor=RC.grey,alignment=TA_CENTER)
     story=[]
-    all_ids=set()
-    for _,row in panel_df.iterrows():
-        for fld in ["INTID","EXTID"]:
-            sid=norm_id(row.get(fld,"")); 
-            if sid: all_ids.add(sid)
     staff_duties={}
     for _,row in panel_df.iterrows():
-        sc=str(row.get("SUBCODE","")).strip(); sn=get_subname(submap,sc)
+        sc=str(row.get("SUBCODE","")).strip()
+        sn=get_subname(submap,sc)
         ins=str(row.get("INSCODE","")).strip()
         for role,fld in [("INT","INTID"),("EXT","EXTID")]:
             sid=norm_id(row.get(fld,""))
             if not sid: continue
             staff_duties.setdefault(sid,[]).append({
                 "ins":ins,"sc":sc,"sn":sn,"role":role,
-                "cp_id":norm_id(row.get("EXTID" if role=="INT" else "INTID",""))
-            })
-    sorted_staff=sorted(all_ids,key=lambda sid:(
-        str(sdf[sdf["Staff ID"].astype(str).str.upper()==sid]["INSTT"].iloc[0])
-        if not sdf[sdf["Staff ID"].astype(str).str.upper()==sid].empty else "",
-        get_name(sdf,sid)))
-    for sid in sorted_staff:
+                "cid":norm_id(row.get("EXTID" if role=="INT" else "INTID",""))})
+    for sid in sorted(staff_duties.keys(),key=lambda s:get_name(sf,s)):
         duties=staff_duties.get(sid,[])
         if not duties: continue
-        name=get_name(sdf,sid); phone=get_phone(sdf,sid)
-        m=sdf[sdf["Staff ID"].astype(str).str.upper()==sid]
+        name=get_name(sf,sid); phone=get_phone(sf,sid)
+        m=sf[sf["Staff ID"].astype(str).str.upper()==sid]
         desig=str(m.iloc[0]["Designation"]) if not m.empty else ""
         dept =str(m.iloc[0]["Department"])  if not m.empty else ""
         instt=str(m.iloc[0]["INSTT"])       if not m.empty else ""
-        story.append(Paragraph("PRACTICAL EXAM DUTY ORDER", H1))
-        story.append(Paragraph(CREATOR, FOOT))
-        story.append(Spacer(1,0.3*cm))
+        story.append(Paragraph("PRACTICAL EXAM DUTY ORDER",H1))
+        story.append(Paragraph(CREATOR,SML)); story.append(Spacer(1,.3*cm))
         hd=[["Staff ID",sid,"Name",name],["Institution",instt,"Phone",phone],
             ["Department",dept,"Designation",desig]]
-        ht=Table(hd,colWidths=[2.8*cm,4.5*cm,2.8*cm,6.5*cm])
+        ht=Table(hd,colWidths=[2.5*cm,4.5*cm,2.5*cm,7*cm])
         ht.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,-1),RC.HexColor("#1e293b")),
+            ("BACKGROUND",(0,0),(-1,-1),RC.HexColor("#0d1117")),
             ("TEXTCOLOR",(0,0),(-1,-1),RC.white),
             ("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),
             ("FONTNAME",(2,0),(2,-1),"Helvetica-Bold"),
             ("FONTSIZE",(0,0),(-1,-1),8),
-            ("GRID",(0,0),(-1,-1),0.5,RC.HexColor("#334155")),
+            ("GRID",(0,0),(-1,-1),.4,RC.HexColor("#21262d")),
             ("PADDING",(0,0),(-1,-1),5),
         ]))
-        story.append(ht); story.append(Spacer(1,0.4*cm))
-        th=["S.No","Duty INSCODE","Sub Code","Subject Name","Role",
+        story.append(ht); story.append(Spacer(1,.4*cm))
+        th=["S.No","Duty\nINSCODE","SubCode","Subject Name","Role",
             "Partner ID","Partner Name","Partner Phone","Date From","Date To"]
         tr=[th]
         for sno,d in enumerate(duties,1):
-            pid=d["cp_id"]; pname=get_name(sdf,pid) if pid else ""; pphone=get_phone(sdf,pid) if pid else ""
+            pid=d["cid"]; pn=get_name(sf,pid) if pid else ""; pp=get_phone(sf,pid) if pid else ""
             tr.append([str(sno),d["ins"],d["sc"],d["sn"] or d["sc"],
-                       d["role"],pid or "-",pname or "-",pphone or "-","",""])
+                       d["role"],pid or "-",pn or "-",pp or "-","",""])
         cw=[.9*cm,2*cm,2*cm,4.2*cm,1.2*cm,2.2*cm,3.5*cm,2.2*cm,2*cm,2*cm]
         dt=Table(tr,colWidths=cw,repeatRows=1)
         dt.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),RC.HexColor("#4f46e5")),
+            ("BACKGROUND",(0,0),(-1,0),RC.HexColor("#6366f1")),
             ("TEXTCOLOR",(0,0),(-1,0),RC.white),
             ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-            ("FONTSIZE",(0,0),(-1,-1),7.5),
+            ("FONTSIZE",(0,0),(-1,-1),7),
             ("ALIGN",(0,0),(-1,-1),"CENTER"),
             ("ALIGN",(3,1),(3,-1),"LEFT"),("ALIGN",(6,1),(6,-1),"LEFT"),
             ("ROWBACKGROUNDS",(0,1),(-1,-1),[RC.HexColor("#f8fafc"),RC.HexColor("#e2e8f0")]),
-            ("GRID",(0,0),(-1,-1),0.4,RC.HexColor("#94a3b8")),
+            ("GRID",(0,0),(-1,-1),.4,RC.HexColor("#94a3b8")),
             ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("PADDING",(0,0),(-1,-1),4),
         ]))
         story.append(dt); story.append(Spacer(1,.3*cm))
-        story.append(Paragraph("Date From / To — to be filled manually at time of duty.",FOOT))
+        story.append(Paragraph("Date From / To to be filled by Flying Squad at duty.",SML))
         story.append(PageBreak())
     doc.build(story)
     return buf.getvalue()
 
-def dl_link(df,fname,label,color="#4f46e5"):
-    csv=df.to_csv(index=False).encode()
-    b64=base64.b64encode(csv).decode()
-    return (f'<a href="data:file/csv;base64,{b64}" download="{fname}" '
-            f'class="dl-btn" style="background:{color};color:white;">{label}</a>')
+# ══════════════════════════════════════════════════════
+# TOP BAR  (always visible)
+# ══════════════════════════════════════════════════════
+pn   = len(st.session_state.panel)
+pdn  = len(st.session_state.pdate)
+ef   = st.session_state.panel["EXTID"].apply(lambda v:norm_id(v)!="").sum() if pn else 0
+ep   = pn-ef
+sc2  = len(st.session_state.staff)
+sm2c = len(st.session_state.ssmap)
 
-def pdf_link(pdf_b,fname,label):
-    b64=base64.b64encode(pdf_b).decode()
-    return (f'<a href="data:application/pdf;base64,{b64}" download="{fname}" '
-            f'class="dl-btn" style="background:#dc2626;color:white;">{label}</a>')
-
-# ══════════════════════════════════════════════
-# PROFESSIONAL SIDEBAR NAVIGATION
-# ══════════════════════════════════════════════
-NAV_ITEMS = [
-    ("upload", "📥", "Upload Centre",  "Panel · Staff · Subject Map"),
-    ("ext",    "🎯", "EXT Allocate",   "Assign External Examiners"),
-    ("duty",   "▶️", "Duty Marking",   "Dates · Errors · Validation"),
-]
-
-with st.sidebar:
-    # Logo / Brand
-    st.markdown("""
-    <div style="padding:20px 16px 12px;border-bottom:1px solid #1e293b;margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:10px">
-        <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);
-                    width:40px;height:40px;border-radius:10px;display:flex;
-                    align-items:center;justify-content:center;font-size:1.3rem">🗂️</div>
-        <div>
-          <div style="font-weight:800;font-size:1rem;color:#e2e8f0;letter-spacing:.5px">DUTY MANAGER</div>
-          <div style="font-size:.68rem;color:#475569;letter-spacing:.3px">PRACTICAL EXAM PANEL</div>
-        </div>
-      </div>
+st.markdown(f"""
+<div class="topbar">
+  <div class="topbar-brand">
+    <div class="topbar-logo">🗂️</div>
+    <div>
+      <div class="topbar-title">DUTY MANAGER</div>
+      <div class="topbar-sub">PRACTICAL EXAM PANEL</div>
     </div>
-    """, unsafe_allow_html=True)
+  </div>
+  <div class="topbar-creator">👤 {CREATOR}</div>
+</div>
 
-    # Navigation
-    st.markdown('<div style="padding:4px 8px 6px;font-size:.68rem;color:#475569;letter-spacing:1px;font-weight:700">NAVIGATION</div>',
+<div class="statsbar">
+  <div class="stat-chip">📋 Panel <b style="color:#6366f1">{pn}</b></div>
+  <div class="stat-chip">✅ EXTID Filled <b style="color:#22c55e">{ef}</b></div>
+  <div class="stat-chip">⏳ Pending <b style="color:#f59e0b">{ep}</b></div>
+  <div class="stat-chip">🗓️ Dated Panel <b style="color:#8b5cf6">{pdn}</b></div>
+  <div class="stat-chip">🧑‍🏫 Staff <b style="color:#3b82f6">{sc2}</b></div>
+  <div class="stat-chip">📘 SubjectMap <b style="color:#ec4899">{sm2c}</b></div>
+  <div class="stat-chip">🔖 Staged <b style="color:#f59e0b">{len(st.session_state.staged)}</b></div>
+</div>
+""", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════
+# MAIN TABS — TOP NAVIGATION
+# ══════════════════════════════════════════════════════
+tab_upload, tab_ext, tab_duty = st.tabs([
+    "  📥  Upload Centre  ",
+    "  🎯  EXT Allocate  ",
+    "  ▶️   Duty Marking  ",
+])
+
+# ══════════════════════════════════════════════════════
+# TAB 1 — UPLOAD CENTRE
+# ══════════════════════════════════════════════════════
+with tab_upload:
+    st.markdown('<div class="sec-hdr">📥 Upload Centre — Panel · Staff · Subject-Staff Mapping</div>',
                 unsafe_allow_html=True)
+    sub1, sub2, sub3 = st.tabs([
+        "  📋  Panel (No Dates)  ",
+        "  🧑‍🏫  Staff Details  ",
+        "  📘  Subject-Staff Mapping  ",
+    ])
 
-    for nav_key, icon, title, subtitle in NAV_ITEMS:
-        is_active = st.session_state.nav == nav_key
-        if is_active:
-            st.markdown(
-                f'<div class="nav-active">{icon}&nbsp;&nbsp;<b>{title}</b>'
-                f'<div style="font-size:.7rem;color:#818cf8;margin-top:2px">{subtitle}</div></div>',
-                unsafe_allow_html=True)
-        else:
-            if st.button(f"{icon}  {title}", key=f"nav_{nav_key}", use_container_width=True,
-                         help=subtitle):
-                st.session_state.nav = nav_key
-                st.rerun()
-
-    # Stats
-    st.markdown('<hr style="border:1px solid #1e293b;margin:12px 0">',unsafe_allow_html=True)
-    st.markdown('<div style="padding:2px 8px 6px;font-size:.68rem;color:#475569;letter-spacing:1px;font-weight:700">QUICK STATS</div>',
-                unsafe_allow_html=True)
-
-    pn=len(st.session_state.panel); pdn=len(st.session_state.pdate)
-    ef=st.session_state.panel["EXTID"].apply(lambda v:norm_id(v)!="").sum() if pn else 0
-    ep=pn-ef; sc_=len(st.session_state.staff); sm2c=len(st.session_state.ssmap)
-    sub_c=len(st.session_state.submap)
-
-    for lbl,val,color in [
-        ("📋 Panel (No Date)", pn,  "#6366f1"),
-        ("✅ EXTID Filled",    ef,  "#22c55e"),
-        ("⏳ EXTID Pending",   ep,  "#f59e0b"),
-        ("🗓️ Panel (Dated)",  pdn, "#8b5cf6"),
-        ("🧑‍🏫 Staff Loaded",  sc_, "#3b82f6"),
-        ("📘 SubjectMap",     sm2c, "#ec4899"),
-        ("📖 SubNameMap",    sub_c, "#06b6d4"),
-    ]:
-        st.markdown(
-            f'<div class="stat-pill">'
-            f'<span style="font-size:.78rem">{lbl}</span>'
-            f'<span class="sv" style="color:{color}">{val}</span>'
-            f'</div>', unsafe_allow_html=True)
-
-    # Footer
-    st.markdown(
-        f'<div style="margin-top:16px;padding:10px 12px;background:rgba(255,255,255,.03);'
-        f'border-radius:8px;border:1px solid #1e293b;font-size:.7rem;color:#475569;text-align:center">'
-        f'✨ {CREATOR}</div>', unsafe_allow_html=True)
-
-page = st.session_state.nav
-
-# ══════════════════════════════════════════════
-# PAGE 1 — UPLOAD CENTRE
-# ══════════════════════════════════════════════
-if page=="upload":
-    st.markdown('<div class="section-hdr">📥 Upload Centre</div>',unsafe_allow_html=True)
-    t1,t2,t3=st.tabs(["📋 Panel (No Dates)","🧑‍🏫 Staff Details","📘 Subject-Staff Mapping"])
-
-    # ── TAB 1: Panel ──────────────────────────────────────
-    with t1:
-        st.markdown('<div class="sub-hdr">Upload & Edit Panel</div>',unsafe_allow_html=True)
-        ca,cb=st.columns([5,7])
-        with ca:
-            st.markdown("**Required columns:**")
+    # ── SUB-TAB 1: Panel ──────────────────────
+    with sub1:
+        ul,ur=st.columns([1,1],gap="medium")
+        with ul:
+            st.markdown('<div class="sub-hdr">📂 Upload Panel CSV / XLSX</div>',unsafe_allow_html=True)
             st.code("INSCODE  NCNO  SUBCODE  REGL  NOC  NOB  INTID  EXTID",language="")
-            st.caption("💡 INTID should be filled. EXTID will be assigned on EXT Allocate page.")
-            uf=st.file_uploader("📂 Upload Panel CSV/XLSX",type=["csv","xlsx"],key="p_up")
-            cl=st.checkbox("⚠️ Clear ALL before upload",key="p_clear")
+            uf=st.file_uploader("",type=["csv","xlsx"],key="p_up",label_visibility="collapsed")
+            cl=st.checkbox("Clear ALL rows before upload",key="p_cl")
             if uf:
                 try:
                     tmp=(pd.read_csv(uf,dtype=object) if uf.name.lower().endswith(".csv")
@@ -601,73 +612,89 @@ if page=="upload":
                     if miss: st.error(f"❌ Missing: {', '.join(miss)}")
                     else:
                         tmp=tmp[req].copy(); tmp["ERROR"]=""; tmp=rowid(tmp,"p")
-                        bk=st.session_state.panel.copy()
                         if cl:
                             st.session_state.panel=rowid(tmp.reset_index(drop=True),"p")
                         else:
                             ins_up=[str(x).strip() for x in tmp["INSCODE"].unique() if str(x).strip()]
+                            bk=st.session_state.panel.copy()
                             bk=bk[~bk["INSCODE"].astype(str).str.strip().isin(ins_up)]
                             bk=pd.concat([bk,tmp],ignore_index=True)
                             st.session_state.panel=rowid(bk.reset_index(drop=True),"p")
-                        P(); st.success(f"✅ Uploaded {len(tmp)} rows")
+                        P(); st.success(f"✅ {len(tmp)} rows uploaded")
                 except Exception as e: st.error(f"❌ {e}")
 
-            st.markdown("---")
-            st.markdown("**📖 SUBCODE → SUBNAME Mapping**")
-            sf2=st.file_uploader("Upload SUBCODE-SUBNAME CSV",type=["csv","xlsx"],key="sub_up2")
+            st.markdown('<hr class="thin">', unsafe_allow_html=True)
+            st.markdown('<div class="sub-hdr">📂 SUBCODE → SUBNAME Mapping</div>',unsafe_allow_html=True)
+            sf2=st.file_uploader("",type=["csv","xlsx"],key="sub_up",label_visibility="collapsed")
             if sf2:
                 try:
                     sm2=(pd.read_csv(sf2,dtype=object) if sf2.name.lower().endswith(".csv")
                          else pd.read_excel(sf2,dtype=object,sheet_name=0)).fillna("")
                     if "SUBCODE" not in sm2.columns or "SUBNAME" not in sm2.columns:
                         if sm2.shape[1]>=2:
-                            sm2=pd.DataFrame({"SUBCODE":sm2.iloc[:,0].astype(str),"SUBNAME":sm2.iloc[:,1].astype(str)})
+                            sm2=pd.DataFrame({"SUBCODE":sm2.iloc[:,0].astype(str),
+                                              "SUBNAME":sm2.iloc[:,1].astype(str)})
                     st.session_state.submap=sm2[["SUBCODE","SUBNAME"]].copy(); SM()
-                    st.success(f"✅ SUBNAME mapping: {len(sm2)} rows")
+                    st.success("✅ SUBNAME mapping saved")
                 except Exception as e: st.error(f"❌ {e}")
 
-            # Submap editable preview
-            if not st.session_state.submap.empty:
-                st.markdown("**✏️ Edit SUBCODE → SUBNAME**")
-                edited_sub=st.data_editor(
-                    st.session_state.submap[["SUBCODE","SUBNAME"]],
-                    use_container_width=True, num_rows="dynamic",
-                    key="submap_editor", height=200)
-                if st.button("💾 Save SUBNAME Map Changes", key="sub_save"):
-                    st.session_state.submap=edited_sub.fillna("").copy()
-                    SM(); st.success("✅ SUBNAME map saved")
+            st.markdown('<div class="sub-hdr">✏️ Edit SUBCODE → SUBNAME</div>',unsafe_allow_html=True)
+            smv=st.session_state.submap.copy()
+            esm=st.data_editor(
+                smv[["SUBCODE","SUBNAME"]].fillna("") if not smv.empty else pd.DataFrame(columns=["SUBCODE","SUBNAME"]),
+                key="sm_ed",use_container_width=True,height=180,num_rows="dynamic")
+            if st.button("💾 Save SUBNAME Mapping",key="sm_sv",use_container_width=True):
+                st.session_state.submap=esm.copy(); SM()
+                st.success("✅ SUBNAME mapping saved")
 
-        with cb:
+        with ur:
             pv=st.session_state.panel.copy()
             if not st.session_state.submap.empty:
                 pv=pv.merge(st.session_state.submap[["SUBCODE","SUBNAME"]],how="left",on="SUBCODE")
-            show_cols=[c for c in ["INSCODE","NCNO","SUBCODE","SUBNAME","REGL","NOC","NOB","INTID","EXTID","ERROR"] if c in pv.columns]
-            st.markdown(f"**Panel — {len(pv)} rows** *(inline editable)*")
-            edited_panel=st.data_editor(pv[show_cols].fillna(""),
-                use_container_width=True, height=420, key="panel_editor", num_rows="dynamic")
-            if st.button("💾 Save Panel Changes", key="p_edit_save"):
-                try:
-                    ep2=edited_panel.copy()
-                    if "SUBNAME" in ep2.columns: ep2=ep2.drop(columns=["SUBNAME"])
-                    if "ERROR" not in ep2.columns: ep2["ERROR"]=""
-                    ep2=rowid(ep2,"p")
-                    st.session_state.panel=ep2.copy(); P()
-                    st.success("✅ Panel changes saved")
-                except Exception as e: st.error(f"❌ {e}")
-            # download
-            exp_c=[c for c in ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID"] if c in st.session_state.panel.columns]
-            st.markdown(dl_link(st.session_state.panel[exp_c],"panel.csv","📥 Download Panel CSV"),
+            show=[c for c in ["INSCODE","NCNO","SUBCODE","SUBNAME","REGL","NOC","NOB","INTID","EXTID","ERROR"]
+                  if c in pv.columns]
+            fi_c,fd_c=st.columns(2)
+            pfi=fi_c.selectbox("🏫 INSCODE",["All"]+sorted(set(pv["INSCODE"].astype(str))),key="pf_i")
+            pfd=fd_c.selectbox("🏭 NCNO",   ["All"]+sorted(set(pv["NCNO"].astype(str))),   key="pf_n")
+            pv2=pv.copy()
+            if pfi!="All": pv2=pv2[pv2["INSCODE"].astype(str)==pfi]
+            if pfd!="All": pv2=pv2[pv2["NCNO"].astype(str)==pfd]
+            st.markdown(f'<div class="sub-hdr">📋 Panel Preview — {len(pv2)} rows (inline editable)</div>',
                         unsafe_allow_html=True)
+            ep2=st.data_editor(pv2[show].fillna(""),key="p_ed",
+                               use_container_width=True,height=360,num_rows="dynamic")
+            if st.button("💾 Save Panel Changes",key="p_sv",use_container_width=True):
+                try:
+                    bk=st.session_state.panel.copy()
+                    if "__rowid" not in ep2.columns: ep2["__rowid"]=""
+                    ed=rowid(ep2.copy(),"p")
+                    if "SUBNAME" in ed.columns: ed=ed.drop(columns=["SUBNAME"])
+                    if "ERROR" not in ed.columns: ed["ERROR"]=""
+                    bk_i=bk.set_index("__rowid",drop=False)
+                    ed_i=ed.set_index("__rowid",drop=False)
+                    for rid in bk_i.index.intersection(ed_i.index):
+                        for c in ed_i.columns: bk_i.at[rid,c]=ed_i.at[rid,c]
+                    new=[r for r in ed_i.index if r not in bk_i.index]
+                    if new:
+                        bk_i=pd.concat([bk_i.reset_index(drop=True),
+                                        ed_i.loc[new].reset_index(drop=True)],ignore_index=True)
+                    st.session_state.panel=rowid(bk_i.reset_index(drop=True),"p")
+                    P(); st.success("✅ Panel saved")
+                except Exception as e: st.error(f"❌ {e}")
 
-    # ── TAB 2: Staff ──────────────────────────────────────
-    with t2:
-        st.markdown('<div class="sub-hdr">Upload & Edit Staff Master</div>',unsafe_allow_html=True)
-        sa,sb=st.columns([5,7])
-        with sa:
-            st.markdown("**Required columns:**")
+    # ── SUB-TAB 2: Staff ──────────────────────
+    with sub2:
+        sl,sr=st.columns([1,1],gap="medium")
+        with sl:
+            st.markdown('<div class="sub-hdr">📂 Upload Staff CSV / XLSX</div>',unsafe_allow_html=True)
             st.code("Staff ID  INSTT  Name of the Staff  Department  dep code  Designation  Phone",language="")
-            st.caption("💡 Phone is used in PDF duty sheets.")
-            usf=st.file_uploader("📂 Upload Staff CSV/XLSX",type=["csv","xlsx"],key="s_up")
+            st.markdown('<div class="info-card">📌 <b>Phone</b> column is new — used on printed duty sheets</div>',
+                        unsafe_allow_html=True)
+            sample_s=pd.DataFrame([{"Staff ID":"X123EEE1","INSTT":"123","Name of the Staff":"KUMAR S",
+                "Department":"EEE","dep code":"1030","Designation":"Lecturer","Phone":"9876543210"}])
+            st.markdown(dl_link(sample_s,"sample_staff.csv","📥 Download Sample Staff CSV"),unsafe_allow_html=True)
+            st.markdown("")
+            usf=st.file_uploader("",type=["csv","xlsx"],key="s_up",label_visibility="collapsed")
             if usf:
                 try:
                     tmp=(pd.read_csv(usf,dtype=object) if usf.name.lower().endswith(".csv")
@@ -683,58 +710,52 @@ if page=="upload":
                         st.session_state.staff=rowid(tmp,"s")[STAFF_COLS].copy()
                         S(); st.success(f"✅ {len(tmp)} staff loaded")
                 except Exception as e: st.error(f"❌ {e}")
-            # sample
-            sample_staff=pd.DataFrame([{"Staff ID":"X123EEE1","INSTT":"123",
-                "Name of the Staff":"KUMAR S","Department":"Electrical & Electronics Engg",
-                "dep code":"1030","Designation":"Lecturer","Phone":"9876543210"}])
-            st.markdown(dl_link(sample_staff,"sample_staff.csv","📥 Sample Staff CSV","#0891b2"),
-                        unsafe_allow_html=True)
-        with sb:
+        with sr:
             sv=st.session_state.staff.copy()
-            fi,fd=st.columns(2)
-            fi_s=fi.selectbox("Filter INSTT",["All"]+sorted(set(sv["INSTT"].astype(str))),key="sf_ins")
-            fd_s=fd.selectbox("Filter Dept",["All"]+sorted(set(sv["Department"].astype(str))),key="sf_dep")
+            fi2,fd2=st.columns(2)
+            fi_s=fi2.selectbox("🏫 INSTT", ["All"]+sorted(set(sv["INSTT"].astype(str))),key="sf_i")
+            fd_s=fd2.selectbox("🏭 Dept",  ["All"]+sorted(set(sv["Department"].astype(str))),key="sf_d")
             if fi_s!="All": sv=sv[sv["INSTT"].astype(str)==fi_s]
             if fd_s!="All": sv=sv[sv["Department"].astype(str)==fd_s]
-            disp=[c for c in ["Staff ID","INSTT","Name of the Staff","Department","dep code","Designation","Phone"] if c in sv.columns]
-            st.markdown(f"**Staff — {len(sv)} rows** *(inline editable)*")
-            es2=st.data_editor(sv[disp],use_container_width=True,height=420,
-                               key="staff_ed2",num_rows="dynamic")
-            if st.button("💾 Save Staff Changes",key="s_save2"):
+            dcols=[c for c in ["Staff ID","INSTT","Name of the Staff","Department",
+                                "dep code","Designation","Phone"] if c in sv.columns]
+            st.markdown(f'<div class="sub-hdr">🧑‍🏫 Staff Preview — {len(sv)} rows (inline editable)</div>',
+                        unsafe_allow_html=True)
+            es=st.data_editor(sv[dcols],key="s_ed",use_container_width=True,height=410,num_rows="dynamic")
+            if st.button("💾 Save Staff Changes",key="s_sv",use_container_width=True):
                 try:
-                    bk=st.session_state.staff.copy().set_index("__rowid",drop=False)
-                    ed=es2.copy()
-                    if "__rowid" not in ed.columns: ed["__rowid"]=""
-                    ed=rowid(ed,"s").set_index("__rowid",drop=False)
-                    for rid in bk.index.intersection(ed.index):
-                        for c in ed.columns: bk.at[rid,c]=ed.at[rid,c]
-                    nw=ed.index.difference(bk.index)
-                    if len(nw):
-                        bk=pd.concat([bk.reset_index(drop=True),ed.loc[nw].reset_index(drop=True)],ignore_index=True)
-                    st.session_state.staff=rowid(bk.reset_index(drop=True),"s")
+                    bk=st.session_state.staff.copy()
+                    if "__rowid" not in es.columns: es["__rowid"]=""
+                    ed=rowid(es.copy(),"s")
+                    bk_i=bk.set_index("__rowid",drop=False)
+                    ed_i=ed.set_index("__rowid",drop=False)
+                    for rid in bk_i.index.intersection(ed_i.index):
+                        for c in ed_i.columns: bk_i.at[rid,c]=ed_i.at[rid,c]
+                    new=[r for r in ed_i.index if r not in bk_i.index]
+                    if new:
+                        bk_i=pd.concat([bk_i.reset_index(drop=True),
+                                        ed_i.loc[new].reset_index(drop=True)],ignore_index=True)
+                    st.session_state.staff=rowid(bk_i.reset_index(drop=True),"s")
                     S(); st.success("✅ Staff saved")
                 except Exception as e: st.error(f"❌ {e}")
-            disp2=[c for c in ["Staff ID","INSTT","Name of the Staff","Department","dep code","Designation","Phone"] if c in st.session_state.staff.columns]
-            st.markdown(dl_link(st.session_state.staff[disp2],"staff.csv","📥 Download Staff CSV"),
-                        unsafe_allow_html=True)
 
-    # ── TAB 3: Subject-Staff Mapping ──────────────────────
-    with t3:
-        st.markdown('<div class="sub-hdr">Upload & Edit Subject-Staff Mapping</div>',unsafe_allow_html=True)
-        ma,mb=st.columns([5,7])
-        with ma:
-            st.markdown("**Required columns:**")
+    # ── SUB-TAB 3: Subject-Staff Mapping ──────
+    with sub3:
+        ml,mr=st.columns([1,1],gap="medium")
+        with ml:
+            st.markdown('<div class="sub-hdr">📂 Upload Subject-Staff Mapping</div>',unsafe_allow_html=True)
             st.code("\n".join(SUBJMAP_COLS),language="")
-            c_t,c_s=st.columns(2)
-            c_t.markdown(dl_link(pd.DataFrame(columns=SUBJMAP_COLS),"ssmap_template.csv",
-                         "📥 Empty Template","#0891b2"),unsafe_allow_html=True)
-            sample_ssm=pd.DataFrame([{"Staff_Last_Staff_ID":"X123EEE1","Staff_Name":"KUMAR S",
+            sample_sm=pd.DataFrame([{
+                "Staff_Last_Staff_ID":"X123EEE1","Staff_Name":"KUMAR S",
                 "Department":"EEE","Department_Code":"1030","Subject_Type":"Core",
                 "Subject_Code":"P3401","Subject_Name":"Basic Electrical Lab","Subject_Remarks":""}])
-            c_s.markdown(dl_link(sample_ssm,"ssmap_sample.csv","📥 Sample CSV","#7c3aed"),
-                         unsafe_allow_html=True)
+            st.markdown(
+                dl_link(pd.DataFrame(columns=SUBJMAP_COLS),"ssmap_template.csv","📥 Empty Template")
+                +"&nbsp;"+
+                dl_link(sample_sm,"ssmap_sample.csv","📥 Sample CSV","#8b5cf6"),
+                unsafe_allow_html=True)
             st.markdown("")
-            ussm=st.file_uploader("📂 Upload Subject-Staff Mapping CSV/XLSX",type=["csv","xlsx"],key="ssm_up2")
+            ussm=st.file_uploader("",type=["csv","xlsx"],key="ssm_up",label_visibility="collapsed")
             if ussm:
                 try:
                     tmp=(pd.read_csv(ussm,dtype=object) if ussm.name.lower().endswith(".csv")
@@ -747,61 +768,59 @@ if page=="upload":
                         st.session_state.ssmap=tmp[SUBJMAP_COLS].copy()
                         SS(); st.success(f"✅ {len(tmp)} mapping rows loaded")
                 except Exception as e: st.error(f"❌ {e}")
-
-        with mb:
+        with mr:
             ssv=st.session_state.ssmap.copy()
-            sf1_,sf2_=st.columns(2)
-            dep_f_=sf1_.selectbox("Filter Dept",["All"]+sorted(set(ssv["Department"].astype(str))),key="sm_dep2")
-            sub_f_=sf2_.text_input("Filter Subject Code","",key="sm_sub2",placeholder="e.g. P3401")
-            if dep_f_!="All": ssv=ssv[ssv["Department"]==dep_f_]
-            if sub_f_.strip(): ssv=ssv[ssv["Subject_Code"].str.contains(sub_f_.strip().upper())]
-            st.markdown(f"**Subject-Staff Mapping — {len(ssv)} rows** *(inline editable)*")
-            edited_ssm=st.data_editor(ssv,use_container_width=True,height=400,
-                                      key="ssm_editor2",num_rows="dynamic")
-            if st.button("💾 Save Mapping Changes",key="ssm_save2"):
-                try:
-                    # Merge edited rows back into full ssmap
-                    full=st.session_state.ssmap.copy()
-                    if "__rowid" in ssv.columns and "__rowid" in edited_ssm.columns:
-                        # update rows present in filtered view
-                        full_idx=full.reset_index().set_index("index")
-                        for _,er in edited_ssm.iterrows():
-                            mask=full["Subject_Code"].astype(str)==str(er.get("Subject_Code",""))
-                            mask2=full["Staff_Last_Staff_ID"].astype(str)==str(er.get("Staff_Last_Staff_ID",""))
-                            hit=full[mask & mask2].index
-                            for c in SUBJMAP_COLS:
-                                if c in er.index:
-                                    for i in hit: full.at[i,c]=er[c]
-                    else:
-                        # simple: replace with edited (filtered view)
-                        full=edited_ssm.copy()
-                    for c in SUBJMAP_COLS:
-                        if c not in full.columns: full[c]=""
-                    st.session_state.ssmap=full[SUBJMAP_COLS].copy()
-                    SS(); st.success("✅ Mapping changes saved")
-                except Exception as e: st.error(f"❌ {e}")
-            st.markdown(dl_link(st.session_state.ssmap,"ssmap.csv","📥 Download Mapping CSV"),
+            sf3,sf4=st.columns(2)
+            dm_f=sf3.selectbox("🏭 Dept",["All"]+sorted(set(ssv["Department"].astype(str))),key="ssm_d")
+            sc_f=sf4.text_input("","",key="ssm_s",placeholder="🔍 Filter Subject Code...")
+            if dm_f!="All": ssv=ssv[ssv["Department"]==dm_f]
+            if sc_f.strip(): ssv=ssv[ssv["Subject_Code"].str.contains(sc_f.strip().upper())]
+            st.markdown(f'<div class="sub-hdr">📘 Mapping Preview — {len(ssv)} rows (inline editable)</div>',
                         unsafe_allow_html=True)
+            essm=st.data_editor(ssv.fillna(""),key="ssm_ed",use_container_width=True,
+                                height=400,num_rows="dynamic")
+            if st.button("💾 Save Mapping Changes",key="ssm_sv",use_container_width=True):
+                try:
+                    ed=essm.copy()
+                    for c in SUBJMAP_COLS:
+                        if c not in ed.columns: ed[c]=""
+                    ed_clean=ed[SUBJMAP_COLS].copy()
+                    ed_clean["Subject_Code"]=ed_clean["Subject_Code"].astype(str).str.strip().str.upper()
+                    bk=st.session_state.ssmap.copy()
+                    if not bk.empty:
+                        bk=bk.set_index("Subject_Code",drop=False)
+                        ed_idx=ed_clean.set_index("Subject_Code",drop=False)
+                        for rid in bk.index.intersection(ed_idx.index):
+                            for c in ed_idx.columns: bk.at[rid,c]=ed_idx.at[rid,c]
+                        new=[r for r in ed_idx.index if r not in bk.index]
+                        if new:
+                            bk=pd.concat([bk.reset_index(drop=True),
+                                          ed_idx.loc[new].reset_index(drop=True)],ignore_index=True)
+                        st.session_state.ssmap=bk.reset_index(drop=True)
+                    else:
+                        st.session_state.ssmap=ed_clean.copy()
+                    SS(); st.success("✅ Subject-Staff mapping saved")
+                except Exception as e: st.error(f"❌ {e}")
 
-# ══════════════════════════════════════════════
-# PAGE 2 — EXT ALLOCATE
-# ══════════════════════════════════════════════
-elif page=="ext":
-    st.markdown('<div class="section-hdr">🎯 EXT Allocate — Assign External Examiners</div>',
+# ══════════════════════════════════════════════════════
+# TAB 2 — EXT ALLOCATE
+# ══════════════════════════════════════════════════════
+with tab_ext:
+    st.markdown('<div class="sec-hdr">🎯 EXT Allocate — Assign External Examiners (No Date Check)</div>',
                 unsafe_allow_html=True)
-    with st.expander("ℹ️ Allocation Logic"):
+    with st.expander("ℹ️ Allocation Logic Used"):
         st.markdown("""
-| Step | Rule |
-|------|------|
-| 1️⃣ | Match panel **SUBCODE** → Subject-Staff Mapping `Subject_Code` |
-| 2️⃣ | Staff `INSTT` must be **different** from panel `INSCODE` (External rule) |
-| 3️⃣ | If no subject map: fallback to `dep code == panel NCNO` |
-| 4️⃣ | Sort by **least existing duty count** → pick best |
-| ⚠️ | Date clash is **NOT** checked here — validate on Duty Marking page |
+| # | Rule | Detail |
+|---|------|--------|
+| 1 | **Subject Match** | Staff mapped to panel SUBCODE via Subject-Staff Mapping |
+| 2 | **External Rule** | Staff INSTT must be **different** from panel INSCODE |
+| 3 | **Least Duty** | Staff with minimum existing duty count is preferred |
+| 4 | **Fallback** | If no SubjectMap → matches `dep code` == panel `NCNO` |
+| ⚠️ | **No Date Check** | Date clash is NOT checked here — checked in Duty Marking tab |
         """)
 
     panel=st.session_state.panel.copy()
-    staff=st.session_state.staff.copy()
+    sf=st.session_state.staff.copy()
     ssmap=st.session_state.ssmap.copy()
     submap=st.session_state.submap.copy()
 
@@ -809,154 +828,165 @@ elif page=="ext":
         return str(r.get("INTID","")).strip()!="" and (str(r.get("EXTID","")).strip()=="" or is_zero(r.get("EXTID","")))
 
     candidates=panel[panel.apply(needs_ext2,axis=1)].copy()
-
     fc1,fc2=st.columns(2)
-    ins_f=fc1.selectbox("🏫 INSCODE",["All"]+sorted(set(panel["INSCODE"].astype(str))),key="ea_ins2")
-    nc_f =fc2.selectbox("🏭 NCNO",   ["All"]+sorted(set(panel["NCNO"].astype(str))),   key="ea_nc2")
+    ins_f=fc1.selectbox("🏫 Filter INSCODE",["All"]+sorted(set(panel["INSCODE"].astype(str))),key="ea_i")
+    nc_f =fc2.selectbox("🏭 Filter NCNO",   ["All"]+sorted(set(panel["NCNO"].astype(str))),   key="ea_n")
     if ins_f!="All": candidates=candidates[candidates["INSCODE"].astype(str)==ins_f]
     if nc_f !="All": candidates=candidates[candidates["NCNO"].astype(str)==nc_f]
 
-    # Metrics
-    st.markdown(
-        f'<div class="metrics-row">'
-        f'<div class="metric-box"><div class="mv">📋 {len(candidates)}</div><div class="ml">Pending EXTID</div></div>'
-        f'<div class="metric-box"><div class="mv">🧑‍🏫 {len(staff)}</div><div class="ml">Staff Loaded</div></div>'
-        f'<div class="metric-box"><div class="mv">📘 {len(ssmap)}</div><div class="ml">SubjectMap</div></div>'
-        f'<div class="metric-box"><div class="mv">🔖 {len(st.session_state.staged)}</div><div class="ml">Staged</div></div>'
-        f'</div>', unsafe_allow_html=True)
+    m1,m2,m3,m4=st.columns(4)
+    m1.metric("📋 Pending EXTID", len(candidates))
+    m2.metric("🧑‍🏫 Staff Loaded", len(sf))
+    m3.metric("📘 SubjectMap",   len(ssmap))
+    m4.metric("🔖 Staged",      len(st.session_state.staged))
 
-    st.markdown("---")
-    st.markdown('<div class="sub-hdr">🤖 Auto-Allocate</div>',unsafe_allow_html=True)
-    ac1,ac2=st.columns([4,1])
-    ac1.caption("Matches SUBCODE → Subject map → Different INSTT → Least duty count → Auto-stages all visible rows")
-    with ac2:
-        if st.button("🤖 Auto-Allocate ALL",type="primary",use_container_width=True):
-            if staff.empty: st.error("❌ Upload staff first!")
-            else:
-                res,skip=auto_allocate(candidates,staff,ssmap if not ssmap.empty else None)
-                for k,v in res.items(): st.session_state.staged[str(k)]=v
-                st.success(f"✅ Auto-staged {len(res)} rows.")
-                if skip:
-                    with st.expander(f"⚠️ {len(skip)} skipped"):
-                        st.dataframe(pd.DataFrame([{"idx":k,"reason":v} for k,v in skip.items()]),
-                                     use_container_width=True)
+    st.markdown('<hr class="thin">',unsafe_allow_html=True)
+    st.markdown('<div class="sec-hdr">🤖 Auto-Allocate</div>',unsafe_allow_html=True)
+    st.markdown('<div class="info-card">Matches SUBCODE → SubjectMap → Different INSTT → Least Duty Count → Stages all visible rows</div>',
+                unsafe_allow_html=True)
+    if st.button("🤖 Auto-Allocate ALL Visible Rows",type="primary"):
+        if sf.empty: st.error("❌ Upload staff data first!")
+        else:
+            res,skip=auto_allocate(candidates,sf,ssmap if not ssmap.empty else None)
+            for k,v in res.items(): st.session_state.staged[str(k)]=v
+            st.success(f"✅ Auto-staged {len(res)} rows.")
+            if skip:
+                with st.expander(f"⚠️ {len(skip)} rows skipped — click to view"):
+                    st.dataframe(pd.DataFrame([{"idx":k,"reason":v} for k,v in skip.items()]),
+                                 use_container_width=True)
 
-    st.markdown('<div class="sub-hdr">📝 Per-Row Allocation</div>',unsafe_allow_html=True)
+    st.markdown('<hr class="thin">',unsafe_allow_html=True)
+    st.markdown('<div class="sec-hdr">📝 Per-Row Manual Allocation</div>',unsafe_allow_html=True)
+
     if candidates.empty:
-        st.markdown('<div class="ok-card">🎉 No pending EXTID rows!</div>',unsafe_allow_html=True)
+        st.markdown('<div class="ok-card">🎉 All visible rows have EXTID assigned!</div>',unsafe_allow_html=True)
     else:
         for _,row in candidates.reset_index().iterrows():
             pidx=int(row["index"])
-            sc=str(row.get("SUBCODE","")).strip(); sn=get_subname(submap,sc)
-            ins=str(row.get("INSCODE","")).strip(); nc=str(row.get("NCNO","")).strip()
-            intid=str(row.get("INTID","")).strip(); intname=get_name(staff,intid)
-            sv=st.session_state.staged.get(str(pidx),"")
-            suggs=ext_suggs(row,staff,ssmap if not ssmap.empty else None)
-            sugg_labels=["— Select —"]+[make_lbl(s) for s in suggs]
+            sc=str(row.get("SUBCODE","")).strip()
+            sn=get_subname(submap,sc)
+            ins=str(row.get("INSCODE","")).strip()
+            intid=str(row.get("INTID","")).strip()
+            intname=get_name(sf,intid)
+            sv_val=st.session_state.staged.get(str(pidx),"")
+            suggs=ext_suggestions(row,sf,ssmap if not ssmap.empty else None)
+            slabels=["— Select Staff —"]+[make_lbl(s) for s in suggs]
+
             with st.container():
                 h1,h2,h3=st.columns([3,3,2])
-                h1.markdown(f'<div style="font-size:.85rem"><b>🏫 {ins}</b> &nbsp;|&nbsp; 🏭 {nc} &nbsp;|&nbsp; 📚 {sc} {("— "+sn) if sn else ""}</div>',unsafe_allow_html=True)
-                h2.markdown(f'<div style="font-size:.82rem">👥 {row.get("NOC","")} &nbsp;|&nbsp; INT: <code>{intid}</code> {intname}</div>',unsafe_allow_html=True)
-                sv_d=(sv[:45]+"...") if len(sv)>45 else sv
-                h3.markdown(f'<div style="font-size:.78rem">{"✅ "+sv_d if sv else "⬜ not staged"}</div>',unsafe_allow_html=True)
+                h1.markdown(
+                    f'<div style="color:#e6edf3;font-size:.87rem;padding:2px 0">'
+                    f'🏫 <b>{ins}</b>&nbsp;·&nbsp;🏭 {row.get("NCNO","")}'
+                    f'&nbsp;·&nbsp;📚 <code style="background:#161b22;padding:1px 6px;border-radius:4px;color:#79c0ff">{sc}</code>'
+                    f'{(" <span style=color:#8b949e;font-size:.8rem>"+sn+"</span>") if sn else ""}</div>',
+                    unsafe_allow_html=True)
+                h2.markdown(
+                    f'<div style="color:#8b949e;font-size:.82rem;padding:2px 0">'
+                    f'👥 {row.get("NOC","")} students&nbsp;·&nbsp;'
+                    f'INT: <code style="background:#161b22;padding:1px 5px;border-radius:4px;color:#fbbf24">{intid}</code>'
+                    f' <span style="color:#c9d1d9">{intname}</span></div>',
+                    unsafe_allow_html=True)
+                sv_short=(sv_val[:38]+"…") if len(sv_val)>38 else sv_val
+                h3.markdown(
+                    f'<div style="font-size:.8rem;padding:2px 0;color:{"#22c55e" if sv_val else "#6e7681"}">'
+                    f'{"✅ "+sv_short if sv_val else "⬜ Not staged"}</div>',
+                    unsafe_allow_html=True)
                 r1,r2,r3=st.columns([4,3,1])
-                di=sugg_labels.index(sv) if sv in sugg_labels else 0
-                sel=r1.selectbox("💡",sugg_labels,index=di,key=f"sel2_{pidx}_{sv[:8]}",
+                di=slabels.index(sv_val) if sv_val in slabels else 0
+                sel=r1.selectbox("💡 Suggestion",slabels,index=di,key=f"sel_{pidx}_{sv_val[:8]}",
                                  label_visibility="collapsed")
-                man=r2.text_input("✏️",value="",key=f"man2_{pidx}",placeholder="Manual Staff ID",
+                man=r2.text_input("",value="",key=f"man_{pidx}",placeholder="✏️ Manual Staff ID",
                                   label_visibility="collapsed")
-                if sel and sel!="— Select —": st.session_state.staged[str(pidx)]=sel
+                if sel and sel!="— Select Staff —": st.session_state.staged[str(pidx)]=sel
                 if man.strip(): st.session_state.staged[str(pidx)]=man.strip()
-                if r3.button("▶",key=f"app2_{pidx}"):
-                    chosen=sv or (sel if sel!="— Select —" else "") or man.strip()
-                    if not chosen: st.warning("⚠️ Select or type a staff ID")
+                if r3.button("▶",key=f"app_{pidx}",help="Apply now"):
+                    chosen=sv_val or (sel if sel!="— Select Staff —" else "") or man.strip()
+                    if not chosen: st.warning("⚠️ Select or enter a Staff ID")
                     else:
                         lc=str(chosen).replace("🟢 ","").split("—")
                         sid_c=norm_id(lc[0].strip()) if lc else ""
                         if sid_c:
                             st.session_state.panel.at[pidx,"EXTID"]=sid_c; P()
                             st.session_state.staged.pop(str(pidx),None)
-                            st.success(f"✅ EXTID={sid_c} (Row {pidx})")
-                        else: st.error("❌ Invalid staff ID")
+                            st.success(f"✅ EXTID {sid_c} applied")
+                        else: st.error("❌ Invalid Staff ID")
                 st.markdown('<hr class="thin">',unsafe_allow_html=True)
 
-    st.markdown("---")
     staged_map=st.session_state.staged
     if staged_map:
-        st.markdown('<div class="sub-hdr">🚀 Apply Staged</div>',unsafe_allow_html=True)
-        with st.expander(f"👁️ Preview {len(staged_map)} staged"):
+        st.markdown('<hr class="thin">',unsafe_allow_html=True)
+        st.markdown('<div class="sec-hdr">🚀 Apply All Staged Rows</div>',unsafe_allow_html=True)
+        with st.expander(f"👁️ Preview {len(staged_map)} staged rows"):
             rows=[]
             for k,v in list(staged_map.items())[:30]:
                 try:
                     pi=int(k); r=st.session_state.panel.loc[pi] if pi in st.session_state.panel.index else {}
-                    rows.append({"Idx":k,"INSCODE":r.get("INSCODE","?"),"SUBCODE":r.get("SUBCODE","?"),"Staged":v})
-                except: rows.append({"Idx":k,"Staged":v})
-            st.dataframe(pd.DataFrame(rows),use_container_width=True)
+                    rows.append({"Idx":k,"INSCODE":r.get("INSCODE","?"),"SUBCODE":r.get("SUBCODE","?"),"→ EXTID":v})
+                except: rows.append({"Idx":k,"→ EXTID":v})
+            st.dataframe(pd.DataFrame(rows),use_container_width=True,height=200)
         a1,a2=st.columns(2)
         if a1.button("✅ Apply ALL Staged",type="primary",use_container_width=True):
-            ok_c,fail_c=0,[]
+            ok_c,fc2b=[],[]
             for k,v in list(staged_map.items()):
                 try: pi=int(k)
-                except: fail_c.append(k); continue
-                if pi not in st.session_state.panel.index: fail_c.append(k); continue
+                except: fc2b.append(k); continue
+                if pi not in st.session_state.panel.index: fc2b.append(k); continue
                 lc=str(v).replace("🟢 ","").split("—")
                 sid_c=norm_id(lc[0].strip()) if lc else ""
                 if sid_c:
                     st.session_state.panel.at[pi,"EXTID"]=sid_c
-                    st.session_state.staged.pop(k,None); ok_c+=1
-                else: fail_c.append(k)
-            P(); st.success(f"✅ {ok_c} applied | ❌ {len(fail_c)} failed")
-        if a2.button("🗑️ Clear Staged",use_container_width=True):
+                    st.session_state.staged.pop(k,None); ok_c.append(k)
+                else: fc2b.append(k)
+            P(); st.success(f"✅ Applied {len(ok_c)} · ❌ Failed {len(fc2b)}")
+        if a2.button("🗑️ Clear All Staged",use_container_width=True):
             st.session_state.staged={}; st.success("✅ Staged cleared")
 
-    st.markdown("---")
-    st.markdown('<div class="sub-hdr">📥 Downloads</div>',unsafe_allow_html=True)
+    st.markdown('<hr class="thin">',unsafe_allow_html=True)
+    st.markdown('<div class="sec-hdr">📥 Downloads</div>',unsafe_allow_html=True)
     all_p=st.session_state.panel.copy()
     if not all_p.empty:
-        exp_c=[c for c in ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID"] if c in all_p.columns]
-        inscodes=sorted(set(all_p["INSCODE"].astype(str)))
         dc1,dc2,dc3=st.columns(3)
+        inscodes=sorted(set(all_p["INSCODE"].astype(str)))
+        exp=[c for c in ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID"] if c in all_p.columns]
         with dc1:
-            st.markdown("**📋 CSV per Institution**")
+            st.markdown('<div class="sub-hdr">📊 CSV per Institution</div>',unsafe_allow_html=True)
             for ins in inscodes:
-                df_ins=all_p[all_p["INSCODE"].astype(str)==ins][exp_c]
-                st.markdown(dl_link(df_ins,f"panel_{ins}.csv",f"📥 INSCODE {ins}","#4f46e5"),
-                            unsafe_allow_html=True)
+                df_i=all_p[all_p["INSCODE"].astype(str)==ins][exp]
+                st.markdown(dl_link(df_i,f"panel_{ins}.csv",f"📥 INSCODE {ins}"),unsafe_allow_html=True)
         with dc2:
-            st.markdown("**📋 Full Panel CSV**")
-            st.markdown(dl_link(all_p[exp_c],"panel_all.csv","📥 Full Panel CSV"),unsafe_allow_html=True)
+            st.markdown('<div class="sub-hdr">📄 Full Panel CSV</div>',unsafe_allow_html=True)
+            st.markdown(dl_link(all_p[exp],"panel_full.csv","📥 Full Panel CSV"),unsafe_allow_html=True)
         with dc3:
-            st.markdown("**🖨️ PDF Duty Sheets**")
+            st.markdown('<div class="sub-hdr">🖨️ PDF Duty Sheets</div>',unsafe_allow_html=True)
             if RPDF:
-                if st.button("🖨️ Generate PDF"):
+                if st.button("⚙️ Generate PDF Duty Sheets",use_container_width=True):
                     with st.spinner("Building PDF..."):
-                        pdf_b=gen_pdf(all_p,st.session_state.staff,submap)
-                    st.markdown(pdf_link(pdf_b,"duty_sheets.pdf","📄 Download PDF"),unsafe_allow_html=True)
+                        pdf_b=generate_pdf(all_p,sf,submap)
+                    st.markdown(pdf_dl_link(pdf_b,"duty_sheets.pdf","📄 Download PDF"),unsafe_allow_html=True)
             else:
-                st.markdown('<div class="err-card">Install reportlab:<br><code>pip install reportlab</code></div>',
-                            unsafe_allow_html=True)
+                st.markdown('<div class="warn-card">⚠️ pip install reportlab</div>',unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════
-# PAGE 3 — DUTY MARKING
-# ══════════════════════════════════════════════
-elif page=="duty":
-    st.markdown('<div class="section-hdr">▶️ Duty Marking — Upload Dated Panel & Validate</div>',
+# ══════════════════════════════════════════════════════
+# TAB 3 — DUTY MARKING
+# ══════════════════════════════════════════════════════
+with tab_duty:
+    st.markdown('<div class="sec-hdr">▶️ Duty Marking — Upload Dated Panel & Validate Clashes</div>',
                 unsafe_allow_html=True)
-    with st.expander("ℹ️ Error-Check Logic"):
+    with st.expander("ℹ️ Error-Check Rules Applied"):
         st.markdown("""
 | # | Check | Rule |
 |---|-------|------|
-| 🔴 1 | **INT/EXT Institution Rule** | `INTID` chars[2-4] of Staff ID must **equal** panel INSCODE. `EXTID` must **differ**. |
-| 🔴 2 | **Single-Day Clash** | Same staff on same date with **different SUBCODE** = CLASH. Same SUBCODE (batches) = ✅ OK. |
-| 🔴 3 | **Multi-Day Overlap** | Overlapping DATE_FROM→DATE_TO ranges for same staff, different SUBCODE = CLASH. |
+| 🔴 1 | **Institution Rule** | `INTID` chars[1:4] must **equal** panel INSCODE; `EXTID` must **differ** |
+| 🔴 2 | **Single-Day Clash** | Same staff · same date · **different SUBCODE** = ❌ CLASH |
+| 🔴 3 | **Multi-Day Overlap** | Overlapping date ranges for same staff across duties = ❌ CLASH |
         """)
 
-    dm1,dm2=st.columns([4,6])
-    with dm1:
-        st.markdown('<div class="sub-hdr">📂 Upload Dated Panel</div>',unsafe_allow_html=True)
+    d1c,d2c=st.columns([1,1],gap="medium")
+    with d1c:
+        st.markdown('<div class="sub-hdr">📂 Upload Dated Panel CSV / XLSX</div>',unsafe_allow_html=True)
         st.code("INSCODE NCNO SUBCODE REGL NOC NOB INTID EXTID DATE_FROM DATE_TO",language="")
-        udp=st.file_uploader("Upload Panel with Dates",type=["csv","xlsx"],key="dp_up2")
-        cl2=st.checkbox("⚠️ Clear existing dated panel",key="dp_clear2")
+        udp=st.file_uploader("",type=["csv","xlsx"],key="dp_up",label_visibility="collapsed")
+        cl2=st.checkbox("Clear existing dated panel",key="dp_cl")
         if udp:
             try:
                 tmp=(pd.read_csv(udp,dtype=object) if udp.name.lower().endswith(".csv")
@@ -974,70 +1004,81 @@ elif page=="duty":
                         bk=bk[~bk["INSCODE"].astype(str).str.strip().isin(ins_up)]
                         bk=pd.concat([bk,tmp],ignore_index=True)
                         st.session_state.pdate=rowid(bk.reset_index(drop=True),"d")
-                    PD(); st.success(f"✅ {len(tmp)} rows loaded")
+                    PD(); st.success(f"✅ {len(tmp)} dated rows loaded")
             except Exception as e: st.error(f"❌ {e}")
 
-        # Filters + Run
-        gc1,gc2=st.columns(2)
-        ins_g=gc1.selectbox("INSCODE",["All"]+sorted(set(st.session_state.pdate["INSCODE"].astype(str))),key="dm_ins2")
-        nc_g =gc2.selectbox("NCNO",   ["All"]+sorted(set(st.session_state.pdate["NCNO"].astype(str))),   key="dm_nc2")
-        filt=st.session_state.pdate.copy()
-        if ins_g!="All": filt=filt[filt["INSCODE"].astype(str)==ins_g]
-        if nc_g !="All": filt=filt[filt["NCNO"].astype(str)==nc_g]
-
-        st.markdown(f'<div class="info-card">📋 {len(filt)} rows selected for check</div>',unsafe_allow_html=True)
-
-        if st.button("🔍 Run Error Check",type="primary",use_container_width=True):
-            with st.spinner("Checking..."):
-                em=check_errors(filt,st.session_state.staff)
-            for idx in filt.index:
-                if idx in st.session_state.pdate.index:
-                    msgs=em.get(idx,[])
-                    st.session_state.pdate.at[idx,"ERROR"]=" | ".join(msgs) if msgs else ""
-            PD(); st.session_state.errors=em
-            te=sum(len(v) for v in em.values())
-            if te==0: st.markdown('<div class="ok-card">✅ No errors! All checks passed.</div>',unsafe_allow_html=True)
-            else: st.markdown(f'<div class="err-card">🔴 {te} issues in {len(em)} rows.</div>',unsafe_allow_html=True)
-
-        if st.session_state.errors:
-            st.markdown('<div class="sub-hdr">🔴 Errors</div>',unsafe_allow_html=True)
-            for idx,msgs in list(st.session_state.errors.items())[:20]:
-                r=st.session_state.pdate.loc[idx] if idx in st.session_state.pdate.index else {}
-                with st.expander(f"Row {idx} | {r.get('INSCODE','?')} | {r.get('SUBCODE','?')} | {r.get('DATE_FROM','?')}→{r.get('DATE_TO','?')}"):
-                    for m in msgs:
-                        st.markdown(f'<div class="err-card">{m}</div>',unsafe_allow_html=True)
-
-    with dm2:
+    with d2c:
         pdv=st.session_state.pdate.copy()
         pdv["_d"]=pdv["DATE_FROM"].apply(parse_date)
         pdv=pdv.sort_values("_d",na_position="last").drop(columns=["_d"])
         if not st.session_state.submap.empty:
             pdv=pdv.merge(st.session_state.submap[["SUBCODE","SUBNAME"]],how="left",on="SUBCODE")
-        show=["INSCODE","NCNO","SUBCODE","SUBNAME","NOC","INTID","EXTID","DATE_FROM","DATE_TO","ERROR"]
-        show=[c for c in show if c in pdv.columns]
-        st.markdown(f"**Dated Panel — {len(pdv)} rows**")
-        st.dataframe(pdv[show].fillna(""),use_container_width=True,height=460)
-        exp_dc=[c for c in ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID","DATE_FROM","DATE_TO","ERROR"]
-                if c in st.session_state.pdate.columns]
-        st.markdown(dl_link(st.session_state.pdate[exp_dc],"panel_dated.csv","📥 Download Dated Panel CSV"),
-                    unsafe_allow_html=True)
+        show=[c for c in ["INSCODE","NCNO","SUBCODE","SUBNAME","NOC","INTID","EXTID",
+                          "DATE_FROM","DATE_TO","ERROR"] if c in pdv.columns]
+        st.markdown(f'<div class="sub-hdr">🗓️ Dated Panel — {len(pdv)} rows</div>',unsafe_allow_html=True)
+        st.dataframe(pdv[show].fillna(""),use_container_width=True,height=300)
 
-        st.markdown("---")
-        st.markdown('<div class="sub-hdr">📊 Duty Count Chart</div>',unsafe_allow_html=True)
-        dc_data={}
+    st.markdown('<hr class="thin">',unsafe_allow_html=True)
+    gc1,gc2,gc3=st.columns([2,2,2])
+    ins_g=gc1.selectbox("🏫 INSCODE",["All"]+sorted(set(st.session_state.pdate["INSCODE"].astype(str))),key="dm_i")
+    nc_g =gc2.selectbox("🏭 NCNO",   ["All"]+sorted(set(st.session_state.pdate["NCNO"].astype(str))),   key="dm_n")
+    filt=st.session_state.pdate.copy()
+    if ins_g!="All": filt=filt[filt["INSCODE"].astype(str)==ins_g]
+    if nc_g !="All": filt=filt[filt["NCNO"].astype(str)==nc_g]
+    with gc3:
+        st.markdown("<br>",unsafe_allow_html=True)
+        if st.button("🔍 Run Error Check",type="primary",use_container_width=True):
+            if st.session_state.pdate.empty:
+                st.error("❌ Upload dated panel first!")
+            else:
+                with st.spinner("Running all checks..."):
+                    err_map=check_errors(filt,st.session_state.staff)
+                for idx in filt.index:
+                    if idx in st.session_state.pdate.index:
+                        msgs=err_map.get(idx,[])
+                        st.session_state.pdate.at[idx,"ERROR"]=" | ".join(msgs) if msgs else ""
+                PD(); st.session_state.errors=err_map
+                total=sum(len(v) for v in err_map.values())
+                if total==0:
+                    st.markdown('<div class="ok-card">✅ All checks passed! No clashes or institution rule violations found.</div>',unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="err-card">🔴 Found {total} issue(s) across {len(err_map)} rows — see Error Report below.</div>',unsafe_allow_html=True)
+
+    if st.session_state.errors:
+        st.markdown('<hr class="thin">',unsafe_allow_html=True)
+        st.markdown('<div class="sec-hdr">🔴 Error Report</div>',unsafe_allow_html=True)
+        for idx,msgs in st.session_state.errors.items():
+            r=st.session_state.pdate.loc[idx] if idx in st.session_state.pdate.index else {}
+            ins_r=r.get("INSCODE","?"); sc_r=r.get("SUBCODE","?")
+            d1_r=r.get("DATE_FROM","?"); d2_r=r.get("DATE_TO","?")
+            with st.expander(f"🔴 Row {idx} · 🏫 {ins_r} · 📚 {sc_r} · 📅 {d1_r}→{d2_r} · {len(msgs)} issue(s)"):
+                for m in msgs:
+                    st.markdown(f'<div class="err-card">{m}</div>',unsafe_allow_html=True)
+
+    st.markdown('<hr class="thin">',unsafe_allow_html=True)
+    st.markdown('<div class="sec-hdr">📊 Duty Count Overview (Top 30 Staff)</div>',unsafe_allow_html=True)
+    if not st.session_state.pdate.empty:
+        dc_d={}
         for _,row in st.session_state.pdate.iterrows():
             for fld in ["INTID","EXTID"]:
                 sid=norm_id(row.get(fld,""))
-                if sid: dc_data[sid]=dc_data.get(sid,0)+1
-        if dc_data:
-            df_ch=pd.DataFrame(list(dc_data.items()),columns=["Staff ID","Duties"])
+                if sid: dc_d[sid]=dc_d.get(sid,0)+1
+        if dc_d:
+            df_ch=pd.DataFrame(list(dc_d.items()),columns=["Staff ID","Duties"])
             df_ch["Name"]=df_ch["Staff ID"].apply(lambda s:get_name(st.session_state.staff,s))
-            df_ch["Label"]=df_ch.apply(lambda r:r["Staff ID"]+(f" {r['Name']}" if r["Name"] else ""),axis=1)
-            df_ch=df_ch.sort_values("Duties",ascending=False).head(25)
-            st.bar_chart(df_ch.set_index("Label")["Duties"],height=280)
+            df_ch["Label"]=df_ch["Staff ID"]+" — "+df_ch["Name"]
+            df_ch=df_ch.sort_values("Duties",ascending=False).head(30)
+            st.bar_chart(df_ch.set_index("Label")["Duties"])
         else:
-            st.markdown('<div class="info-card">📊 No duty data yet.</div>',unsafe_allow_html=True)
+            st.markdown('<div class="info-card">ℹ️ No staff assignments found in dated panel.</div>',
+                        unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="info-card">ℹ️ Upload dated panel to see duty count chart.</div>',
+                    unsafe_allow_html=True)
 
-st.markdown(
-    f'<div class="creator-bar">✨ {CREATOR}</div>',
-    unsafe_allow_html=True)
+    # Footer
+    st.markdown(
+        f'<div style="text-align:center;margin-top:20px">'
+        f'<span style="background:#161b22;border:1px solid #30363d;border-radius:20px;'
+        f'padding:5px 18px;color:#8b949e;font-size:.75rem">✨ {CREATOR}</span></div>',
+        unsafe_allow_html=True)

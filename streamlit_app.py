@@ -19,7 +19,20 @@ try:
     from reportlab.lib.enums import TA_CENTER
     RPDF = True
 except ImportError:
-    RPDF = False
+    try:
+        import subprocess, sys
+        subprocess.check_call([sys.executable,"-m","pip","install","reportlab","-q"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        from reportlab.lib import colors as RC
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
+                                        Paragraph, Spacer, PageBreak)
+        from reportlab.lib.enums import TA_CENTER
+        RPDF = True
+    except Exception:
+        RPDF = False
 
 DATA_DIR         = "data"
 PANEL_PATH       = os.path.join(DATA_DIR,"panel.csv")
@@ -364,24 +377,33 @@ def ext_suggestions_v2(panel_row, sf, ssmap):
 
 def make_ext_label(s, category):
     """
-    Format: EMOJI INSTT-depcode | StaffID | Name | Desig | Duties:N
+    Format: EMOJI INSTT-Dept | StaffID-Name | Designation | Duties:N
     category: 'willing' -> 🟢, 'same_dept' -> 🟡, 'other' -> ⚪
     """
     icon = {"willing":"🟢","same_dept":"🟡","other":"⚪"}.get(category,"⚪")
-    dep_part = f"{s['instt']}-{s['dep']}" if s['dep'] else s['instt']
-    return f"{icon} {dep_part} | {s['sid']} | {s['name']} | {s['desig']} | Duties:{s['count']}"
+    dep_part  = f"{s['instt']}-{s['dep']}"   if s['dep']  else s['instt']
+    id_name   = f"{s['sid']}-{s['name']}"    if s['name'] else s['sid']
+    cnt = s['count']
+    duty_icon = "🟢" if cnt==0 else ("🟡" if cnt<=2 else "🔴")
+    return f"{icon} {dep_part} | {id_name} | {s['desig']} | {duty_icon}Duties:{cnt}"
 
 def make_dropdown_label(s):
     return f"{s['icon']} {s['sid']} | {s['name']} | {s['desig']} | 🏫{s['instt']} | Duties:{s['count']}"
 
 def extract_sid(label):
+    """Extract StaffID from label: EMOJI INSTT-Dept | StaffID-Name | ... """
     l=str(label).strip()
     l=re.sub(r'^[🟢🟡🔴⚪]\s*','',l)
-    # label format: INSTT-depcode | StaffID | ...
     parts=[p.strip() for p in l.split("|")]
-    # second part is StaffID
     if len(parts)>=2:
-        return norm_id(parts[1])
+        # part[1] is "StaffID-Name" — extract just the ID (before first hyphen-ish split or use norm_id)
+        id_name_part = parts[1].strip()
+        # StaffID contains letters+digits, typically format like X123EEE1
+        # Split on first " - " or "-" that separates ID from name
+        m = re.match(r'([A-Z0-9]+)',id_name_part.upper())
+        if m:
+            return norm_id(m.group(1))
+        return norm_id(id_name_part.split("-")[0])
     return norm_id(parts[0])
 
 def build_dropdown_options(willing, same_dept, others):
@@ -405,22 +427,42 @@ def is_header_opt(lbl):
     return lbl.startswith("──") or lbl.startswith("— Select")
 
 def auto_allocate(candidates, sf, ssmap, progress_cb=None):
-    """Fast: pre-computes all lookups ONCE, then single-pass per candidate."""
+    """
+    Fast allocator with LIVE duty-count tracking.
+    As each staff is allocated, their count is incremented in-memory so
+    subsequent rows see accurate duty loads — prevents same-staff repeat allocation.
+    """
     res, skip = {}, {}
     if sf.empty:
         return res, skip
+
     staff_list, _, ssmap_index = build_precomputed(sf, ssmap)
+
+    # Live counts dict — key: sid, value: current duty count (mutable)
+    live_counts = {s["sid"]: s["count"] for s in staff_list}
+
     total = len(candidates)
     for i, (pidx, row) in enumerate(candidates.iterrows()):
+        # Update each entry in staff_list with current live count before sorting
+        for s in staff_list:
+            s["count"] = live_counts.get(s["sid"], s["count"])
+            s["icon"]  = priority_icon(s["count"])
+            s["cls"]   = priority_class(s["count"])
+
         willing, same_dept, others = ext_suggestions_fast(row, staff_list, ssmap_index)
         best = willing or same_dept or others
         if best:
+            chosen = best[0]
             cat = "willing" if willing else ("same_dept" if same_dept else "other")
-            res[pidx] = make_ext_label(best[0], cat)
+            res[pidx] = make_ext_label(chosen, cat)
+            # Increment live count so this staff appears busier for next row
+            live_counts[chosen["sid"]] = live_counts.get(chosen["sid"], 0) + 1
         else:
             skip[pidx] = f"No eligible external staff for SUBCODE {row.get('SUBCODE','?')}"
+
         if progress_cb:
             progress_cb(i+1, total)
+
     return res, skip
 
 def check_errors(pdf,sf):
@@ -902,19 +944,20 @@ with tab_ext:
             pv=view_panel.copy()
             if not submap.empty:
                 pv=pv.merge(submap[["SUBCODE","SUBNAME"]],how="left",on="SUBCODE")
-            pv["INT_NAME"]=pv["INTID"].apply(lambda x:get_name(sf,x))
-            pv["EXT_NAME"]=pv["EXTID"].apply(lambda x:get_name(sf,x))
+            pv["INTID_NAME"]=pv["INTID"].apply(lambda x:(x+" — "+get_name(sf,x)) if norm_id(x) else "—")
+            pv["EXTID_NAME"]=pv["EXTID"].apply(lambda x:(x+" — "+get_name(sf,x)) if norm_id(x) else "—")
             pv["STATUS"]=pv.apply(lambda r:"✅ Filled" if has_ext(r) else "⏳ Pending",axis=1)
-            show_cols=[c for c in ["STATUS","INSCODE","NCNO","SUBCODE","SUBNAME","NOC","INTID","INT_NAME","EXTID","EXT_NAME"] if c in pv.columns]
+            if "SUBNAME" not in pv.columns: pv["SUBNAME"]=""
+            show_cols=[c for c in ["STATUS","INSCODE","NCNO","SUBCODE","SUBNAME","NOC","INTID_NAME","EXTID_NAME"] if c in pv.columns]
             def sty_status(v): return "background-color:#0d2218;color:#86efac" if v=="✅ Filled" else "background-color:#2d1515;color:#fca5a5"
             def sty_ext(v):
                 v2=str(v).strip()
-                return ("background-color:#0d2218;color:#86efac" if v2 and not is_zero(v2)
+                return ("background-color:#0d2218;color:#86efac" if v2 and v2!="—"
                         else "background-color:#2d1515;color:#fca5a5")
             styled=pv[show_cols].fillna("").style\
                 .applymap(sty_status,subset=["STATUS"])\
-                .applymap(sty_ext,subset=["EXTID"])
-            st.dataframe(styled,use_container_width=True,height=250)
+                .applymap(sty_ext,subset=["EXTID_NAME"])
+            st.dataframe(styled,use_container_width=True,height=260)
         else:
             st.markdown('<div class="info-card">ℹ️ No panel rows for current filters.</div>',unsafe_allow_html=True)
 
@@ -952,13 +995,15 @@ with tab_ext:
 
                 _status.markdown(
                     f'<div class="ok-card">✅ Done! Auto-staged <b>{len(res)}</b> rows'
-                    f'{"· ⚠️ "+str(len(skip))+" skipped" if skip else ""}.</div>',
+                    f'{" · ⚠️ "+str(len(skip))+" skipped" if skip else ""}.</div>',
                     unsafe_allow_html=True)
 
                 if skip:
                     with st.expander(f"⚠️ {len(skip)} rows had no eligible staff"):
                         st.dataframe(pd.DataFrame([{"idx":k,"reason":v} for k,v in skip.items()]),use_container_width=True)
-            st.rerun()
+
+                if res:
+                    st.rerun()   # Only rerun if something was actually staged
 
         # Apply All Staged
         staged_map=st.session_state.staged
@@ -967,14 +1012,20 @@ with tab_ext:
             st.markdown('<div class="sec-hdr">🚀 Apply All Staged</div>',unsafe_allow_html=True)
             with st.expander(f"👁️ Preview {len(staged_map)} staged assignments"):
                 rows=[]
+                _ds_cache=duty_stats(sf)
                 for k,v in list(staged_map.items())[:40]:
                     try:
                         pi=int(k); r=st.session_state.panel.loc[pi] if pi in st.session_state.panel.index else {}
                         sid_v=extract_sid(v)
-                        cnt_d=duty_stats(sf).get(sid_v,{}).get("count",0)
-                        rows.append({"Row":k,"INSCODE":r.get("INSCODE","?"),"SUBCODE":r.get("SUBCODE","?"),
-                                     "→ EXTID":sid_v,"Name":get_name(sf,sid_v),
-                                     "Priority":f"{priority_icon(cnt_d)} {cnt_d} duties"})
+                        cnt_d=_ds_cache.get(sid_v,{}).get("count",0)
+                        sn=get_subname(submap,str(r.get("SUBCODE","")).strip())
+                        sub_disp=f"{r.get('SUBCODE','?')} {('— '+sn) if sn else ''}"
+                        int_disp=f"{r.get('INTID','')}"
+                        int_nm=get_name(sf,r.get('INTID',''))
+                        if int_nm: int_disp+=f" — {int_nm}"
+                        rows.append({"Row":k,"INSCODE":r.get("INSCODE","?"),"Subject":sub_disp,
+                                     "INT":int_disp,"→ EXTID":sid_v,"EXT Name":get_name(sf,sid_v),
+                                     "Duties":f"{priority_icon(cnt_d)} {cnt_d}"})
                     except: rows.append({"Row":k,"→ EXTID":v})
                 st.dataframe(pd.DataFrame(rows),use_container_width=True,height=220)
 
@@ -1150,21 +1201,22 @@ with tab_ext:
 
                 # ── Row 4: Selected staff preview card ──
                 if sel and not is_header_opt(sel) and sel!=opts[0]:
-                    # parse label: EMOJI INSTT-depcode | StaffID | Name | Desig | Duties:N
+                    # New label: EMOJI INSTT-Dept | StaffID-Name | Desig | 🟢Duties:N
                     raw=re.sub(r'^[🟢🟡🔴⚪]\s*','',sel)
                     parts=[p.strip() for p in raw.split("|")]
-                    instt_dep = parts[0] if len(parts)>0 else ""
-                    sid_s     = norm_id(parts[1]) if len(parts)>1 else ""
-                    name_s    = parts[2] if len(parts)>2 else ""
-                    desig_s   = parts[3] if len(parts)>3 else ""
-                    duties_raw= parts[4].replace("Duties:","").strip() if len(parts)>4 else "0"
-                    cnt_v     = int(duties_raw) if duties_raw.isdigit() else 0
-                    badge     = priority_class(cnt_v)
-                    ph_s      = get_phone(sf,sid_s)
-                    # determine category for badge color
-                    w_ids={s["sid"] for s in willing}
-                    yd_ids={s["sid"] for s in same_dept}
-                    cat_lbl="🟢 Willing" if sid_s in w_ids else ("🟡 Same Dept" if sid_s in yd_ids else "⚪ Other")
+                    instt_dep  = parts[0] if len(parts)>0 else ""
+                    id_name_p  = parts[1] if len(parts)>1 else ""
+                    desig_s    = parts[2] if len(parts)>2 else ""
+                    duties_raw = re.sub(r'[🟢🟡🔴]','',parts[3]).replace("Duties:","").strip() if len(parts)>3 else "0"
+                    cnt_v      = int(duties_raw) if duties_raw.isdigit() else 0
+                    m_id = re.match(r'([A-Z0-9]+)',id_name_p.upper())
+                    sid_s  = norm_id(m_id.group(1)) if m_id else ""
+                    name_s = id_name_p[len(sid_s)+1:].strip() if sid_s and len(id_name_p)>len(sid_s) else id_name_p
+                    badge  = priority_class(cnt_v)
+                    ph_s   = get_phone(sf,sid_s)
+                    w_ids  = {s["sid"] for s in willing}
+                    yd_ids = {s["sid"] for s in same_dept}
+                    cat_lbl= "🟢 Willing" if sid_s in w_ids else ("🟡 Same Dept" if sid_s in yd_ids else "⚪ Other")
                     st.markdown(
                         f'<div style="background:#0c1a2e;border-radius:8px;padding:10px 16px;margin:6px 0;font-size:.82rem;border:1px solid #1d3557">'
                         f'<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">'

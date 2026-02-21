@@ -263,7 +263,12 @@ if "ssmap" not in st.session_state:
 if "staged"  not in st.session_state: st.session_state.staged={}
 if "errors"  not in st.session_state: st.session_state.errors={}
 
-def P():  st.session_state.panel=rowid(st.session_state.panel,"p"); save_csv(st.session_state.panel,PANEL_PATH)
+def P():
+    df=st.session_state.panel.copy()
+    key_c=[c for c in ["INSCODE","SUBCODE","REGL","INTID"] if c in df.columns]
+    df=df.drop_duplicates(subset=key_c,keep="last").reset_index(drop=True)
+    st.session_state.panel=rowid(df,"p")
+    save_csv(st.session_state.panel,PANEL_PATH)
 def PD(): st.session_state.pdate=rowid(st.session_state.pdate,"d"); save_csv(st.session_state.pdate,PANEL_DATED_PATH)
 def S():  st.session_state.staff=rowid(st.session_state.staff,"s"); save_csv(st.session_state.staff,STAFF_PATH)
 def SM(): save_csv(st.session_state.submap,SUBMAP_PATH)
@@ -616,6 +621,8 @@ with tab_up:
                             bk=st.session_state.panel.copy()
                             bk=bk[~bk["INSCODE"].astype(str).str.strip().isin(ins_up)]
                             bk=pd.concat([bk,tmp],ignore_index=True)
+                            key_c=[c for c in ["INSCODE","SUBCODE","REGL","INTID"] if c in bk.columns]
+                            bk=bk.drop_duplicates(subset=key_c,keep="last").reset_index(drop=True)
                             st.session_state.panel=rowid(bk.reset_index(drop=True),"p")
                         P(); st.success(f"✅ {len(tmp)} rows uploaded")
                 except Exception as e: st.error(f"❌ {e}")
@@ -623,7 +630,7 @@ with tab_up:
             pv=st.session_state.panel.copy()
             if not st.session_state.submap.empty:
                 pv=pv.merge(st.session_state.submap[["SUBCODE","SUBNAME"]],how="left",on="SUBCODE")
-            show=[c for c in ["INSCODE","NCNO","SUBCODE","SUBNAME","REGL","NOC","NOB","INTID","EXTID","ERROR"] if c in pv.columns]
+            edit_cols=[c for c in ["INSCODE","NCNO","SUBCODE","SUBNAME","REGL","NOC","NOB","INTID","EXTID","ERROR","__rowid"] if c in pv.columns]
             fi_c,fd_c=st.columns(2)
             pfi=fi_c.selectbox("🏫 INSCODE",["All"]+sorted(set(pv["INSCODE"].astype(str))),key="pf_i")
             pfd=fd_c.selectbox("🏭 NCNO",   ["All"]+sorted(set(pv["NCNO"].astype(str))),   key="pf_n")
@@ -631,22 +638,53 @@ with tab_up:
             if pfi!="All": pv2=pv2[pv2["INSCODE"].astype(str)==pfi]
             if pfd!="All": pv2=pv2[pv2["NCNO"].astype(str)==pfd]
             st.markdown(f'<span class="sub-hdr">📋 Panel — {len(pv2)} rows <small style="color:#6e7681;font-weight:400">(editable)</small></span>',unsafe_allow_html=True)
-            ep2=st.data_editor(pv2[show].fillna(""),key="p_ed",use_container_width=True,height=340,num_rows="dynamic")
+            ep2=st.data_editor(
+                pv2[edit_cols].fillna(""),key="p_ed",use_container_width=True,height=340,num_rows="dynamic",
+                column_config={"__rowid":st.column_config.Column(disabled=True,width="small")})
+            ddup_c1, ddup_c2 = st.columns([3,1])
+            with ddup_c2:
+                if st.button("🧹 Remove Duplicates",key="p_dedup",use_container_width=True,
+                             help="Remove duplicate rows by INSCODE+SUBCODE+REGL+INTID (keeps last)"):
+                    before=len(st.session_state.panel)
+                    key_c=[c for c in ["INSCODE","SUBCODE","REGL","INTID"] if c in st.session_state.panel.columns]
+                    st.session_state.panel=st.session_state.panel.drop_duplicates(subset=key_c,keep="last").reset_index(drop=True)
+                    st.session_state.panel=rowid(st.session_state.panel,"p")
+                    dropped=before-len(st.session_state.panel)
+                    save_csv(st.session_state.panel,PANEL_PATH)
+                    if dropped: st.success(f"🧹 Removed {dropped} duplicate(s). Panel now has {len(st.session_state.panel)} rows.")
+                    else: st.info("✅ No duplicates found.")
+                    st.rerun()
+            with ddup_c1:
+                pass
             if st.button("💾 Save Panel Changes",key="p_sv",use_container_width=True):
                 try:
                     bk=st.session_state.panel.copy()
-                    if "__rowid" not in ep2.columns: ep2["__rowid"]=""
-                    ed=rowid(ep2.copy(),"p")
+                    ed=ep2.copy()
                     if "SUBNAME" in ed.columns: ed=ed.drop(columns=["SUBNAME"])
                     if "ERROR" not in ed.columns: ed["ERROR"]=""
-                    bk_i=bk.set_index("__rowid",drop=False); ed_i=ed.set_index("__rowid",drop=False)
-                    for rid in bk_i.index.intersection(ed_i.index):
-                        for c in ed_i.columns: bk_i.at[rid,c]=ed_i.at[rid,c]
-                    new=[r for r in ed_i.index if r not in bk_i.index]
-                    if new:
-                        bk_i=pd.concat([bk_i.reset_index(drop=True),ed_i.loc[new].reset_index(drop=True)],ignore_index=True)
-                    st.session_state.panel=rowid(bk_i.reset_index(drop=True),"p")
-                    P(); st.success("✅ Panel saved")
+                    # Rows with valid __rowid: UPDATE in place; rows with blank __rowid: INSERT (new rows added by user)
+                    ed_exist=ed[ed["__rowid"].astype(str).str.strip()!=""].copy()
+                    ed_new  =ed[ed["__rowid"].astype(str).str.strip()=="" ].copy()
+                    ed_new  =rowid(ed_new,"p")
+                    bk_i=bk.set_index("__rowid",drop=False)
+                    for _,er in ed_exist.iterrows():
+                        rid=str(er["__rowid"]).strip()
+                        if rid in bk_i.index:
+                            for c in ed_exist.columns:
+                                bk_i.at[rid,c]=er[c]
+                    if not ed_new.empty:
+                        bk_i=pd.concat([bk_i.reset_index(drop=True),ed_new.reset_index(drop=True)],ignore_index=True)
+                    result=bk_i.reset_index(drop=True)
+                    # Safety: drop exact duplicate rows on key columns
+                    key_cols=[c for c in ["INSCODE","SUBCODE","REGL","INTID"] if c in result.columns]
+                    before=len(result)
+                    result=result.drop_duplicates(subset=key_cols,keep="last").reset_index(drop=True)
+                    dropped=before-len(result)
+                    st.session_state.panel=rowid(result,"p")
+                    P()
+                    msg="✅ Panel saved"
+                    if dropped: msg+=f" · 🧹 {dropped} duplicate row(s) removed"
+                    st.success(msg)
                 except Exception as e: st.error(f"❌ {e}")
 
     with s2:
@@ -682,21 +720,27 @@ with tab_up:
             fd_s=fd2.selectbox("🏭 Dept", ["All"]+sorted(set(sv["Department"].astype(str))),key="sf_d")
             if fi_s!="All": sv=sv[sv["INSTT"].astype(str)==fi_s]
             if fd_s!="All": sv=sv[sv["Department"].astype(str)==fd_s]
-            dcols=[c for c in ["Staff ID","INSTT","Name of the Staff","Department","dep code","Designation","Phone"] if c in sv.columns]
+            dcols=[c for c in ["Staff ID","INSTT","Name of the Staff","Department","dep code","Designation","Phone","__rowid"] if c in sv.columns]
             st.markdown(f'<span class="sub-hdr">🧑‍🏫 Staff — {len(sv)} rows <small style="color:#6e7681;font-weight:400">(editable)</small></span>',unsafe_allow_html=True)
-            es=st.data_editor(sv[dcols],key="s_ed",use_container_width=True,height=400,num_rows="dynamic")
+            es=st.data_editor(sv[dcols],key="s_ed",use_container_width=True,height=400,num_rows="dynamic",
+                column_config={"__rowid":st.column_config.Column(disabled=True,width="small")})
             if st.button("💾 Save Staff",key="s_sv",use_container_width=True):
                 try:
                     bk=st.session_state.staff.copy()
-                    if "__rowid" not in es.columns: es["__rowid"]=""
-                    ed=rowid(es.copy(),"s")
-                    bk_i=bk.set_index("__rowid",drop=False); ed_i=ed.set_index("__rowid",drop=False)
-                    for rid in bk_i.index.intersection(ed_i.index):
-                        for c in ed_i.columns: bk_i.at[rid,c]=ed_i.at[rid,c]
-                    new=[r for r in ed_i.index if r not in bk_i.index]
-                    if new:
-                        bk_i=pd.concat([bk_i.reset_index(drop=True),ed_i.loc[new].reset_index(drop=True)],ignore_index=True)
-                    st.session_state.staff=rowid(bk_i.reset_index(drop=True),"s")
+                    ed=es.copy()
+                    ed_exist=ed[ed["__rowid"].astype(str).str.strip()!=""].copy()
+                    ed_new  =ed[ed["__rowid"].astype(str).str.strip()=="" ].copy()
+                    ed_new  =rowid(ed_new,"s")
+                    bk_i=bk.set_index("__rowid",drop=False)
+                    for _,er in ed_exist.iterrows():
+                        rid=str(er["__rowid"]).strip()
+                        if rid in bk_i.index:
+                            for c in ed_exist.columns: bk_i.at[rid,c]=er[c]
+                    if not ed_new.empty:
+                        bk_i=pd.concat([bk_i.reset_index(drop=True),ed_new.reset_index(drop=True)],ignore_index=True)
+                    result=bk_i.reset_index(drop=True)
+                    result=result.drop_duplicates(subset=["Staff ID"],keep="last").reset_index(drop=True)
+                    st.session_state.staff=rowid(result,"s")
                     S(); st.success("✅ Staff saved")
                 except Exception as e: st.error(f"❌ {e}")
 
@@ -1232,6 +1276,8 @@ with tab_duty:
                         bk=st.session_state.pdate.copy()
                         bk=bk[~bk["INSCODE"].astype(str).str.strip().isin(ins_up)]
                         bk=pd.concat([bk,tmp],ignore_index=True)
+                        key_c=[c for c in ["INSCODE","SUBCODE","REGL","INTID"] if c in bk.columns]
+                        bk=bk.drop_duplicates(subset=key_c,keep="last").reset_index(drop=True)
                         st.session_state.pdate=rowid(bk.reset_index(drop=True),"d")
                     PD(); st.success(f"✅ {len(tmp)} dated rows loaded")
             except Exception as e: st.error(f"❌ {e}")

@@ -273,6 +273,7 @@ def SS(): save_csv(st.session_state.ssmap,SUBJMAP_PATH)
 # LOGIC
 # ═══════════════════════════════════════════════════════
 def duty_stats(sf):
+    """Count duties per staff — called ONCE and cached."""
     stats={}
     if sf is None or sf.empty: return stats
     dcols=[c for c in sf.columns if c!="__rowid" and isinstance(c,str)
@@ -286,58 +287,75 @@ def duty_stats(sf):
                     "phone":row.get("Phone","")}
     return stats
 
-def ext_suggestions_v2(panel_row, sf, ssmap):
+def build_precomputed(sf, ssmap):
     """
-    Returns (willing, same_dept, others) — three lists sorted by duty count asc.
-    - willing (GREEN): staff mapped to that subject via ssmap, external (diff INSTT)
-    - same_dept (YELLOW): same dep code as panel NCNO, not in willing, external
-    - others (bottom): remaining external staff, sorted by least duties
-    No 4th fallback logic.
+    Pre-compute all lookups ONCE so per-row suggestions are O(1) dict lookups.
+    Returns (staff_list, duty_stats_dict, ssmap_index)
+    - staff_list: list of dicts, one per staff member
+    - duty_stats_dict: {sid: count}
+    - ssmap_index: {subject_code_upper: set(sid)}
     """
-    p_ins = str(panel_row.get("INSCODE","")).strip()
-    sub   = str(panel_row.get("SUBCODE","")).strip().upper()
-    p_dep = str(panel_row.get("NCNO","")).strip()   # used for same_dept check
     stats = duty_stats(sf)
 
-    # get willing set from ssmap
-    willing_ids = set()
-    if ssmap is not None and not ssmap.empty:
-        mapped = ssmap[ssmap["Subject_Code"].astype(str).str.strip().str.upper()==sub]
-        willing_ids = set(mapped["Staff_Last_Staff_ID"].apply(norm_id).unique())
-
-    willing, same_dept, others = [], [], []
-
+    staff_list = []
     for _,row in sf.iterrows():
         sid = norm_id(row.get("Staff ID"))
         if not sid: continue
-        instt = str(row.get("INSTT","")).strip()
-        if instt == p_ins: continue   # must be external
-        dep   = str(row.get("dep code","")).strip()
-        se    = stats.get(sid,{})
-        cnt   = se.get("count",0)
-        entry = {
-            "sid":   sid,
-            "name":  row.get("Name of the Staff",""),
-            "desig": row.get("Designation",""),
-            "instt": instt,
-            "dep":   dep,
+        cnt = stats.get(sid,{}).get("count",0)
+        staff_list.append({
+            "sid":     sid,
+            "name":    row.get("Name of the Staff",""),
+            "desig":   row.get("Designation",""),
+            "instt":   str(row.get("INSTT","")).strip(),
+            "dep":     str(row.get("dep code","")).strip(),
             "depname": row.get("Department",""),
-            "phone": row.get("Phone",""),
-            "count": cnt,
-            "icon":  priority_icon(cnt),
-            "cls":   priority_class(cnt),
-        }
-        if sid in willing_ids:
-            willing.append(entry)
-        elif dep == p_dep:
-            same_dept.append(entry)
+            "phone":   row.get("Phone",""),
+            "count":   cnt,
+            "icon":    priority_icon(cnt),
+            "cls":     priority_class(cnt),
+        })
+
+    ssmap_index = {}
+    if ssmap is not None and not ssmap.empty:
+        for _,row in ssmap.iterrows():
+            sc = str(row.get("Subject_Code","")).strip().upper()
+            sid = norm_id(row.get("Staff_Last_Staff_ID",""))
+            if sc and sid:
+                ssmap_index.setdefault(sc, set()).add(sid)
+
+    return staff_list, stats, ssmap_index
+
+def ext_suggestions_fast(panel_row, staff_list, ssmap_index):
+    """
+    Fast version — uses pre-built staff_list and ssmap_index dicts.
+    O(staff) single pass, no re-iterating sf or ssmap.
+    Returns (willing, same_dept, others).
+    """
+    p_ins = str(panel_row.get("INSCODE","")).strip()
+    sub   = str(panel_row.get("SUBCODE","")).strip().upper()
+    p_dep = str(panel_row.get("NCNO","")).strip()
+
+    willing_ids = ssmap_index.get(sub, set())
+
+    willing, same_dept, others = [], [], []
+    for s in staff_list:
+        if s["instt"] == p_ins: continue   # must be external
+        if s["sid"] in willing_ids:
+            willing.append(s)
+        elif s["dep"] == p_dep:
+            same_dept.append(s)
         else:
-            others.append(entry)
+            others.append(s)
 
     willing.sort(key=lambda x:x["count"])
     same_dept.sort(key=lambda x:x["count"])
     others.sort(key=lambda x:x["count"])
     return willing, same_dept, others
+
+def ext_suggestions_v2(panel_row, sf, ssmap):
+    """Wrapper for compatibility — builds precomputed on each call (slow path, for manual)."""
+    staff_list, _, ssmap_index = build_precomputed(sf, ssmap)
+    return ext_suggestions_fast(panel_row, staff_list, ssmap_index)
 
 def make_ext_label(s, category):
     """
@@ -381,17 +399,24 @@ def build_dropdown_options(willing, same_dept, others):
 def is_header_opt(lbl):
     return lbl.startswith("──") or lbl.startswith("— Select")
 
-def auto_allocate(candidates,sf,ssmap):
-    res,skip={},{}
-    for pidx,row in candidates.iterrows():
-        willing,same_dept,others=ext_suggestions_v2(row,sf,ssmap)
+def auto_allocate(candidates, sf, ssmap, progress_cb=None):
+    """Fast: pre-computes all lookups ONCE, then single-pass per candidate."""
+    res, skip = {}, {}
+    if sf.empty:
+        return res, skip
+    staff_list, _, ssmap_index = build_precomputed(sf, ssmap)
+    total = len(candidates)
+    for i, (pidx, row) in enumerate(candidates.iterrows()):
+        willing, same_dept, others = ext_suggestions_fast(row, staff_list, ssmap_index)
         best = willing or same_dept or others
         if best:
-            cat="willing" if willing else ("same_dept" if same_dept else "other")
-            res[pidx]=make_ext_label(best[0],cat)
+            cat = "willing" if willing else ("same_dept" if same_dept else "other")
+            res[pidx] = make_ext_label(best[0], cat)
         else:
-            skip[pidx]=f"No eligible external staff for SUBCODE {row.get('SUBCODE','?')}"
-    return res,skip
+            skip[pidx] = f"No eligible external staff for SUBCODE {row.get('SUBCODE','?')}"
+        if progress_cb:
+            progress_cb(i+1, total)
+    return res, skip
 
 def check_errors(pdf,sf):
     errs={i:[] for i in pdf.index}
@@ -854,13 +879,40 @@ with tab_ext:
         st.markdown('<div class="info-card">🟢 Willing staff (mapped) → 🟡 Same dept → ⚪ Others · All sorted by least duties · Must be external (diff INSTT)</div>',unsafe_allow_html=True)
 
         if st.button("🤖 Auto-Allocate ALL Pending",type="primary"):
-            if sf.empty: st.error("❌ Upload staff data first!")
+            if sf.empty:
+                st.error("❌ Upload staff data first!")
+            elif candidates.empty:
+                st.warning("⚠️ No pending rows to allocate.")
             else:
-                res,skip=auto_allocate(candidates,sf,ssmap if not ssmap.empty else None)
+                total_c = len(candidates)
+                _status = st.empty()
+                _bar    = st.progress(0)
+                _status.markdown(
+                    f'<div class="info-card">⚙️ Pre-computing staff & subject lookups for <b>{total_c}</b> rows…</div>',
+                    unsafe_allow_html=True)
+
+                def _progress(done, total):
+                    pct = int(done/total*100)
+                    _bar.progress(pct)
+                    _status.markdown(
+                        f'<div class="info-card">🔄 Allocating row <b>{done}</b> / <b>{total}</b> &nbsp; ({pct}%)</div>',
+                        unsafe_allow_html=True)
+
+                res, skip = auto_allocate(
+                    candidates, sf,
+                    ssmap if not ssmap.empty else None,
+                    progress_cb=_progress)
+
+                _bar.progress(100)
                 for k,v in res.items(): st.session_state.staged[str(k)]=v
-                st.success(f"✅ Auto-staged {len(res)} rows.")
+
+                _status.markdown(
+                    f'<div class="ok-card">✅ Done! Auto-staged <b>{len(res)}</b> rows'
+                    f'{"· ⚠️ "+str(len(skip))+" skipped" if skip else ""}.</div>',
+                    unsafe_allow_html=True)
+
                 if skip:
-                    with st.expander(f"⚠️ {len(skip)} rows skipped"):
+                    with st.expander(f"⚠️ {len(skip)} rows had no eligible staff"):
                         st.dataframe(pd.DataFrame([{"idx":k,"reason":v} for k,v in skip.items()]),use_container_width=True)
             st.rerun()
 
@@ -909,6 +961,11 @@ with tab_ext:
   <span style="color:#8b949e;font-size:.78rem">⚪ Other Staff (Least Duties First)</span>
 </div>""", unsafe_allow_html=True)
 
+        # Pre-compute lookups ONCE for the whole manual tab render
+        with st.spinner("⚙️ Loading staff & subject data…"):
+            _staff_list, _, _ssmap_index = build_precomputed(
+                sf, ssmap if not ssmap.empty else pd.DataFrame())
+
         # Filters for manual allocation
         mfc1,mfc2,mfc3=st.columns([2,2,2])
         m_ins_f = mfc1.selectbox("🏫 Filter INSCODE",["All"]+sorted(set(panel["INSCODE"].astype(str))),key="ma_i")
@@ -948,7 +1005,7 @@ with tab_ext:
                 sv_val   = st.session_state.staged.get(str(pidx),"")
 
                 # Build dropdown options
-                willing,same_dept,others = ext_suggestions_v2(row,sf,ssmap if not ssmap.empty else None)
+                willing,same_dept,others = ext_suggestions_fast(row,_staff_list,_ssmap_index)
                 opts = build_dropdown_options(willing,same_dept,others)
                 total_suggs = len(willing)+len(same_dept)+len(others)
 

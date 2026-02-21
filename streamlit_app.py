@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Duty Manager v4 — MUTHUMANI S, LECTURER-EEE, GPT KARUR | 9443100811"""
+"""Duty Manager v5 — MUTHUMANI S, LECTURER-EEE, GPT KARUR | 9443100811"""
 from __future__ import annotations
 import os, uuid, base64
 from datetime import datetime, timedelta, date
@@ -38,7 +38,6 @@ SMAP_COLS  = ["Staff_Last_Staff_ID","Staff_Name","Department","Department_Code",
 
 st.set_page_config(page_title="Duty Manager",page_icon="🗂️",layout="wide",initial_sidebar_state="collapsed")
 
-# ═══════════════════════════════════════════════════════ CSS
 st.markdown("""
 <style>
 .stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"],
@@ -59,29 +58,24 @@ h1,h2,h3,h4,h5,h6{color:#e6edf3 !important;}
 [data-testid="stMarkdownContainer"] tr:nth-child(even) td{background:#0f1923 !important;}
 code,pre,[data-testid="stCode"] code{background:#010409 !important;color:#79c0ff !important;font-size:.79rem !important;border-radius:5px !important;}
 [data-testid="stCaptionContainer"] p{color:#6e7681 !important;font-size:.75rem !important;}
-/* TOPBAR */
 .topbar{background:#010409;border-bottom:1px solid #21262d;padding:0 20px;
     display:flex;align-items:center;justify-content:space-between;height:58px;margin:0 -1.4rem 0;}
 .tb-logo{background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:9px;padding:7px 9px;font-size:1.2rem;line-height:1;}
 .tb-title{color:#e6edf3 !important;font-weight:700;font-size:1.05rem;line-height:1.15;}
 .tb-sub{color:#6e7681 !important;font-size:.68rem;}
 .tb-badge{color:#8b949e !important;font-size:.72rem;background:#161b22;border:1px solid #21262d;border-radius:20px;padding:4px 14px;white-space:nowrap;}
-/* STATS */
 .statsbar{display:flex;gap:6px;flex-wrap:wrap;background:#010409;border-bottom:1px solid #21262d;padding:8px 20px;margin:0 -1.4rem 1rem;}
 .sc{background:#161b22;border:1px solid #21262d;border-radius:6px;padding:3px 11px;font-size:.74rem;color:#8b949e !important;white-space:nowrap;}
 .sc b{color:#e6edf3 !important;font-size:.86rem;}
-/* TABS */
 .stTabs [data-baseweb="tab-list"]{background:#010409 !important;border-bottom:1px solid #21262d !important;gap:0 !important;padding:0 4px !important;margin:0 -1.4rem 1.2rem !important;overflow-x:auto !important;}
 .stTabs [data-baseweb="tab"]{background:transparent !important;color:#8b949e !important;border:none !important;border-bottom:2px solid transparent !important;border-radius:0 !important;font-size:.88rem !important;font-weight:600 !important;padding:13px 22px !important;transition:all .15s !important;white-space:nowrap !important;}
 .stTabs [data-baseweb="tab"]:hover{color:#e6edf3 !important;background:#161b22 !important;}
 .stTabs [aria-selected="true"]{color:#6366f1 !important;border-bottom-color:#6366f1 !important;}
 .stTabs [data-baseweb="tab"] p{color:inherit !important;font-size:inherit !important;font-weight:inherit !important;}
 [data-testid="stTabsContent"]{padding:0 !important;border:none !important;background:transparent !important;}
-/* HEADERS */
 .sec-hdr{background:linear-gradient(90deg,#6366f1,#8b5cf6);color:#fff !important;padding:8px 18px;border-radius:8px;font-weight:700;font-size:.96rem;margin:10px 0 8px;display:flex;align-items:center;gap:8px;}
 .sec-hdr *{color:#fff !important;}
 .sub-hdr{color:#e6edf3 !important;font-size:.9rem;font-weight:700;padding:0 0 5px;border-bottom:1px solid #21262d;margin:10px 0 6px;display:block;}
-/* CARDS */
 .err-card{background:#2d1515;border-left:3px solid #ef4444;border-radius:6px;padding:8px 12px;margin:3px 0;color:#fca5a5 !important;}
 .err-card *{color:#fca5a5 !important;}
 .ok-card{background:#0d2218;border-left:3px solid #22c55e;border-radius:6px;padding:8px 12px;margin:3px 0;color:#86efac !important;}
@@ -90,11 +84,16 @@ code,pre,[data-testid="stCode"] code{background:#010409 !important;color:#79c0ff
 .warn-card *{color:#fcd34d !important;}
 .info-card{background:#0c1a2e;border-left:3px solid #3b82f6;border-radius:6px;padding:8px 12px;margin:3px 0;color:#93c5fd !important;}
 .info-card *{color:#93c5fd !important;}
-/* EXT ROW CARD */
-.ext-row{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px 14px;margin:6px 0;}
-.ext-row-pending{border-left:4px solid #ef4444 !important;}
-.ext-row-done{border-left:4px solid #22c55e !important;}
-/* INPUTS */
+/* Manual Allocation Card */
+.alloc-card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px 18px;margin:10px 0;}
+.alloc-card-pending{border-left:4px solid #ef4444 !important;}
+.alloc-card-staged{border-left:4px solid #f59e0b !important;}
+.alloc-card-done{border-left:4px solid #22c55e !important;}
+.alloc-info-row{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #21262d;}
+.alloc-badge{background:#0c1a2e;border:1px solid #1d3557;border-radius:5px;padding:3px 9px;font-size:.76rem;color:#93c5fd !important;}
+.alloc-badge-green{background:#0d2218;border:1px solid #22c55e;border-radius:5px;padding:3px 9px;font-size:.76rem;color:#86efac !important;}
+.alloc-badge-yellow{background:#2a1f0a;border:1px solid #f59e0b;border-radius:5px;padding:3px 9px;font-size:.76rem;color:#fcd34d !important;}
+.alloc-badge-red{background:#2d1515;border:1px solid #ef4444;border-radius:5px;padding:3px 9px;font-size:.76rem;color:#fca5a5 !important;}
 [data-testid="stSelectbox"]>div>div{background:#161b22 !important;border:1px solid #30363d !important;border-radius:6px !important;color:#e6edf3 !important;}
 [data-testid="stSelectbox"] span{color:#e6edf3 !important;}
 [data-testid="stSelectbox"] label p{color:#8b949e !important;font-size:.82rem !important;}
@@ -108,29 +107,23 @@ code,pre,[data-testid="stCode"] code{background:#010409 !important;color:#79c0ff
 [data-testid="stFileUploaderDropzone"]{background:#0d1117 !important;border:1px dashed #30363d !important;border-radius:6px !important;}
 [data-testid="stFileUploaderDropzone"] p,[data-testid="stFileUploaderDropzone"] span{color:#6e7681 !important;}
 [data-testid="stFileUploaderDropzone"] button{background:#21262d !important;color:#c9d1d9 !important;border:1px solid #30363d !important;border-radius:6px !important;}
-/* DOWNLOAD BUTTONS */
 [data-testid="stDownloadButton"] button{background:linear-gradient(135deg,#6366f1,#8b5cf6) !important;color:#ffffff !important;border:none !important;border-radius:7px !important;font-weight:600 !important;font-size:.82rem !important;}
 [data-testid="stDownloadButton"] button:hover{opacity:.88 !important;}
 [data-testid="stDownloadButton"] button p{color:#ffffff !important;font-size:.82rem !important;}
-/* BUTTONS */
 .stButton>button{border-radius:7px !important;font-weight:600 !important;font-size:.85rem !important;}
 .stButton>button[kind="primary"]{background:linear-gradient(135deg,#6366f1,#8b5cf6) !important;border:none !important;color:#fff !important;}
 .stButton>button[kind="primary"]:hover{opacity:.88 !important;}
 .stButton>button[kind="secondary"]{background:#161b22 !important;border:1px solid #30363d !important;color:#e6edf3 !important;}
 .stButton>button[kind="secondary"]:hover{border-color:#6366f1 !important;}
-/* DATA TABLES */
 div[data-testid="stDataFrame"],div[data-testid="stDataEditor"]{border-radius:8px !important;overflow:hidden !important;}
-/* EXPANDER */
 [data-testid="stExpander"]{background:#161b22 !important;border:1px solid #21262d !important;border-radius:8px !important;}
 [data-testid="stExpander"] summary{background:#161b22 !important;border-radius:8px !important;padding:8px 16px !important;}
 [data-testid="stExpander"] summary p{color:#e6edf3 !important;font-weight:600 !important;}
 [data-testid="stExpander"] svg{fill:#8b949e !important;}
 .streamlit-expanderContent{background:#0d1117 !important;padding:12px !important;}
-/* METRICS */
 [data-testid="stMetric"]{background:#161b22 !important;border:1px solid #21262d !important;border-radius:8px !important;padding:12px 14px !important;}
 [data-testid="stMetricLabel"] p{color:#8b949e !important;font-size:.78rem !important;}
 [data-testid="stMetricValue"] div{color:#e6edf3 !important;}
-/* PRIORITY BADGES */
 .badge-green{background:#0d2218;color:#22c55e;border:1px solid #22c55e;border-radius:12px;padding:1px 8px;font-size:.72rem;font-weight:700;}
 .badge-yellow{background:#2a1f0a;color:#f59e0b;border:1px solid #f59e0b;border-radius:12px;padding:1px 8px;font-size:.72rem;font-weight:700;}
 .badge-red{background:#2d1515;color:#ef4444;border:1px solid #ef4444;border-radius:12px;padding:1px 8px;font-size:.72rem;font-weight:700;}
@@ -229,6 +222,7 @@ def get_phone(sf,sid): return get_col(sf,sid,"Phone")
 def get_desig(sf,sid): return get_col(sf,sid,"Designation")
 def get_instt(sf,sid): return get_col(sf,sid,"INSTT")
 def get_dep(sf,sid):   return get_col(sf,sid,"Department")
+def get_depcode(sf,sid): return get_col(sf,sid,"dep code")
 
 def get_subname(sm,code):
     if sm is None or sm.empty: return ""
@@ -236,7 +230,6 @@ def get_subname(sm,code):
     return m.iloc[0]["SUBNAME"] if not m.empty else ""
 
 def priority_icon(count):
-    """Return priority color icon based on duty count"""
     if count==0:   return "🟢"
     elif count<=2: return "🟡"
     else:          return "🔴"
@@ -280,7 +273,6 @@ def SS(): save_csv(st.session_state.ssmap,SUBJMAP_PATH)
 # LOGIC
 # ═══════════════════════════════════════════════════════
 def duty_stats(sf):
-    """Count duties per staff from date columns (INSTT tokens)"""
     stats={}
     if sf is None or sf.empty: return stats
     dcols=[c for c in sf.columns if c!="__rowid" and isinstance(c,str)
@@ -294,54 +286,111 @@ def duty_stats(sf):
                     "phone":row.get("Phone","")}
     return stats
 
-def ext_suggestions(panel_row,sf,ssmap):
-    """Get eligible external staff sorted by priority (least duties first)"""
-    p_ins=str(panel_row.get("INSCODE","")).strip()
-    sub=str(panel_row.get("SUBCODE","")).strip().upper()
-    p_dep=str(panel_row.get("NCNO","")).strip()
-    stats=duty_stats(sf)
+def ext_suggestions_v2(panel_row, sf, ssmap):
+    """
+    Returns (willing, same_dept, others) — three lists sorted by duty count asc.
+    - willing (GREEN): staff mapped to that subject via ssmap, external (diff INSTT)
+    - same_dept (YELLOW): same dep code as panel NCNO, not in willing, external
+    - others (bottom): remaining external staff, sorted by least duties
+    No 4th fallback logic.
+    """
+    p_ins = str(panel_row.get("INSCODE","")).strip()
+    sub   = str(panel_row.get("SUBCODE","")).strip().upper()
+    p_dep = str(panel_row.get("NCNO","")).strip()   # used for same_dept check
+    stats = duty_stats(sf)
+
+    # get willing set from ssmap
+    willing_ids = set()
     if ssmap is not None and not ssmap.empty:
-        mapped=ssmap[ssmap["Subject_Code"].astype(str).str.strip().str.upper()==sub]
-        mapped_ids=set(mapped["Staff_Last_Staff_ID"].apply(norm_id).unique())
-    else:
-        mapped_ids=None
-    res=[]
+        mapped = ssmap[ssmap["Subject_Code"].astype(str).str.strip().str.upper()==sub]
+        willing_ids = set(mapped["Staff_Last_Staff_ID"].apply(norm_id).unique())
+
+    willing, same_dept, others = [], [], []
+
     for _,row in sf.iterrows():
-        sid=norm_id(row.get("Staff ID"))
+        sid = norm_id(row.get("Staff ID"))
         if not sid: continue
-        instt=str(row.get("INSTT","")).strip()
-        if instt==p_ins: continue          # must be external (different institution)
-        dep=str(row.get("dep code","")).strip()
-        if mapped_ids is not None:
-            if sid not in mapped_ids: continue   # must be mapped to subject
-        elif dep!=p_dep: continue                # fallback: match dept code
-        se=stats.get(sid,{})
-        cnt=se.get("count",0)
-        res.append({"sid":sid,"name":row.get("Name of the Staff",""),
-                    "desig":row.get("Designation",""),"instt":instt,
-                    "dep":dep,"phone":row.get("Phone",""),"count":cnt,
-                    "icon":priority_icon(cnt),"cls":priority_class(cnt)})
-    res.sort(key=lambda x:x["count"])
-    return res
+        instt = str(row.get("INSTT","")).strip()
+        if instt == p_ins: continue   # must be external
+        dep   = str(row.get("dep code","")).strip()
+        se    = stats.get(sid,{})
+        cnt   = se.get("count",0)
+        entry = {
+            "sid":   sid,
+            "name":  row.get("Name of the Staff",""),
+            "desig": row.get("Designation",""),
+            "instt": instt,
+            "dep":   dep,
+            "depname": row.get("Department",""),
+            "phone": row.get("Phone",""),
+            "count": cnt,
+            "icon":  priority_icon(cnt),
+            "cls":   priority_class(cnt),
+        }
+        if sid in willing_ids:
+            willing.append(entry)
+        elif dep == p_dep:
+            same_dept.append(entry)
+        else:
+            others.append(entry)
+
+    willing.sort(key=lambda x:x["count"])
+    same_dept.sort(key=lambda x:x["count"])
+    others.sort(key=lambda x:x["count"])
+    return willing, same_dept, others
+
+def make_ext_label(s, category):
+    """
+    Format: EMOJI INSTT-depcode | StaffID | Name | Desig | Duties:N
+    category: 'willing' -> 🟢, 'same_dept' -> 🟡, 'other' -> ⚪
+    """
+    icon = {"willing":"🟢","same_dept":"🟡","other":"⚪"}.get(category,"⚪")
+    dep_part = f"{s['instt']}-{s['dep']}" if s['dep'] else s['instt']
+    return f"{icon} {dep_part} | {s['sid']} | {s['name']} | {s['desig']} | Duties:{s['count']}"
 
 def make_dropdown_label(s):
-    """Rich label: priority icon + staff info"""
     return f"{s['icon']} {s['sid']} | {s['name']} | {s['desig']} | 🏫{s['instt']} | Duties:{s['count']}"
 
 def extract_sid(label):
-    """Extract staff ID from dropdown label"""
-    # Remove priority icon (first char if emoji)
     l=str(label).strip()
-    # Remove leading icon characters
-    l=re.sub(r'^[🟢🟡🔴]\s*','',l)
-    return norm_id(l.split("|")[0].strip())
+    l=re.sub(r'^[🟢🟡🔴⚪]\s*','',l)
+    # label format: INSTT-depcode | StaffID | ...
+    parts=[p.strip() for p in l.split("|")]
+    # second part is StaffID
+    if len(parts)>=2:
+        return norm_id(parts[1])
+    return norm_id(parts[0])
+
+def build_dropdown_options(willing, same_dept, others):
+    """Build dropdown options list with section headers."""
+    opts = ["— Select External Examiner —"]
+    if willing:
+        opts.append("── 🟢 WILLING STAFF (Mapped to Subject) ──")
+        for s in willing:
+            opts.append(make_ext_label(s,"willing"))
+    if same_dept:
+        opts.append("── 🟡 SAME DEPARTMENT (Not in Willing) ──")
+        for s in same_dept:
+            opts.append(make_ext_label(s,"same_dept"))
+    if others:
+        opts.append("── ⚪ OTHER STAFF (Less Duty Priority) ──")
+        for s in others:
+            opts.append(make_ext_label(s,"other"))
+    return opts
+
+def is_header_opt(lbl):
+    return lbl.startswith("──") or lbl.startswith("— Select")
 
 def auto_allocate(candidates,sf,ssmap):
     res,skip={},{}
     for pidx,row in candidates.iterrows():
-        suggs=ext_suggestions(row,sf,ssmap)
-        if suggs: res[pidx]=make_dropdown_label(suggs[0])
-        else: skip[pidx]=f"No eligible external staff for SUBCODE {row.get('SUBCODE','?')}"
+        willing,same_dept,others=ext_suggestions_v2(row,sf,ssmap)
+        best = willing or same_dept or others
+        if best:
+            cat="willing" if willing else ("same_dept" if same_dept else "other")
+            res[pidx]=make_ext_label(best[0],cat)
+        else:
+            skip[pidx]=f"No eligible external staff for SUBCODE {row.get('SUBCODE','?')}"
     return res,skip
 
 def check_errors(pdf,sf):
@@ -373,7 +422,7 @@ def check_errors(pdf,sf):
     return {k:v for k,v in errs.items() if v}
 
 # ═══════════════════════════════════════════════════════
-# PDF / HTML GENERATION
+# PDF GENERATION
 # ═══════════════════════════════════════════════════════
 def generate_pdf_rl(panel_df,sf,submap):
     buf=BytesIO()
@@ -498,7 +547,7 @@ st.markdown(f"""
 </div>""", unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════
-# MAIN TABS  (4 tabs + Downloads)
+# MAIN TABS
 # ═══════════════════════════════════════════════════════
 tab_up, tab_ext, tab_duty, tab_dl = st.tabs([
     "  📥  Upload Centre  ",
@@ -656,7 +705,7 @@ with tab_up:
             ssv=st.session_state.ssmap.copy()
             sf3,sf4=st.columns(2)
             dm_f=sf3.selectbox("🏭 Dept",["All"]+sorted(set(ssv["Department"].astype(str))),key="ssm_d")
-            sc_f=sf4.text_input("","",key="ssm_s",placeholder="🔍 Subject Code...",label_visibility="collapsed")
+            sc_f=sf4.text_input("",""  ,key="ssm_s",placeholder="🔍 Subject Code...",label_visibility="collapsed")
             if dm_f!="All": ssv=ssv[ssv["Department"]==dm_f]
             if sc_f.strip(): ssv=ssv[ssv["Subject_Code"].str.contains(sc_f.strip().upper(),na=False)]
             st.markdown(f'<span class="sub-hdr">📘 Mapping — {len(ssv)} rows <small style="color:#6e7681;font-weight:400">(editable)</small></span>',unsafe_allow_html=True)
@@ -717,178 +766,275 @@ with tab_up:
                 st.success("✅ SUBNAME mapping saved")
 
 # ═══════════════════════════════════════════════════════
-# TAB 2 — EXT ALLOCATE
+# TAB 2 — EXT ALLOCATE  (with inner sub-tabs)
 # ═══════════════════════════════════════════════════════
 with tab_ext:
     st.markdown('<div class="sec-hdr">🎯 EXT Allocate — Assign External Examiners</div>',unsafe_allow_html=True)
 
-    # Priority legend
-    st.markdown("""
-<div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap">
-  <span class="badge-green">🟢 Best (0 duties)</span>
-  <span class="badge-yellow">🟡 Good (1-2 duties)</span>
-  <span class="badge-red">🔴 Busy (3+ duties)</span>
-  <span style="color:#8b949e;font-size:.78rem;align-self:center">Dropdown shows eligible staff sorted by priority</span>
-</div>""", unsafe_allow_html=True)
+    # inner sub-tabs
+    etab_auto, etab_manual, etab_edl = st.tabs([
+        "  🤖  Auto Allocate  ",
+        "  📝  Manual Allocate  ",
+        "  📥  Download  ",
+    ])
 
-    with st.expander("ℹ️ Allocation Logic"):
-        st.markdown("""
-| # | Rule | Detail |
-|---|------|--------|
-| 1 | **Subject Match** | Staff mapped to panel SUBCODE via Subject-Staff Mapping |
-| 2 | **External Rule** | Staff INSTT must differ from panel INSCODE |
-| 3 | **Priority** | 🟢 0 duties (best) → 🟡 1-2 duties → 🔴 3+ duties |
-| 4 | **Fallback** | No SubjectMap → matches `dep code` == panel `NCNO` |
-        """)
+    panel   = st.session_state.panel.copy()
+    sf      = st.session_state.staff.copy()
+    ssmap   = st.session_state.ssmap.copy()
+    submap  = st.session_state.submap.copy()
 
-    panel=st.session_state.panel.copy()
-    sf=st.session_state.staff.copy()
-    ssmap=st.session_state.ssmap.copy()
-    submap=st.session_state.submap.copy()
-
-    # ── FILTERS ──
-    fc1,fc2,fc3=st.columns([2,2,2])
-    ins_f=fc1.selectbox("🏫 Filter INSCODE",["All"]+sorted(set(panel["INSCODE"].astype(str))),key="ea_i")
-    nc_f =fc2.selectbox("🏭 Filter NCNO",   ["All"]+sorted(set(panel["NCNO"].astype(str))),   key="ea_n")
-    show_f=fc3.selectbox("👁️ Show",["Pending Only","All Rows","Filled Only"],key="ea_sh")
-
-    # ── FIX: needs_ext only checks EXTID is empty (no INTID requirement) ──
     def needs_ext(r): return norm_id(r.get("EXTID",""))==""
     def has_ext(r):   return norm_id(r.get("EXTID",""))!=""
 
-    filt_panel=panel.copy()
-    if ins_f!="All": filt_panel=filt_panel[filt_panel["INSCODE"].astype(str)==ins_f]
-    if nc_f !="All": filt_panel=filt_panel[filt_panel["NCNO"].astype(str)==nc_f]
+    # ── AUTO ALLOCATE SUB-TAB ──
+    with etab_auto:
+        st.markdown("""
+<div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+  <span class="badge-green">🟢 Willing Staff (Mapped to Subject)</span>
+  <span class="badge-yellow">🟡 Same Dept (Not Mapped)</span>
+  <span style="color:#8b949e;font-size:.78rem;align-self:center">⚪ Others at bottom — all sorted least duties first</span>
+</div>""", unsafe_allow_html=True)
 
-    candidates=filt_panel[filt_panel.apply(needs_ext,axis=1)].copy()
+        with st.expander("ℹ️ Allocation Logic"):
+            st.markdown("""
+| # | Rule | Detail |
+|---|------|--------|
+| 1 | **Subject Match** | 🟢 Staff mapped to panel SUBCODE via Subject-Staff Mapping |
+| 2 | **Same Dept** | 🟡 Same dep code as NCNO, not in willing list |
+| 3 | **Others** | ⚪ Remaining external staff (sorted least duties) |
+| 4 | **External Rule** | Staff INSTT must differ from panel INSCODE |
+            """)
 
-    if show_f=="Pending Only":  view_panel=candidates.copy()
-    elif show_f=="Filled Only": view_panel=filt_panel[filt_panel.apply(has_ext,axis=1)].copy()
-    else:                       view_panel=filt_panel.copy()
+        fc1,fc2,fc3=st.columns([2,2,2])
+        ins_f = fc1.selectbox("🏫 Filter INSCODE",["All"]+sorted(set(panel["INSCODE"].astype(str))),key="ea_i")
+        nc_f  = fc2.selectbox("🏭 Filter NCNO",   ["All"]+sorted(set(panel["NCNO"].astype(str))),   key="ea_n")
+        show_f= fc3.selectbox("👁️ Show",["Pending Only","All Rows","Filled Only"],key="ea_sh")
 
-    m1,m2,m3,m4=st.columns(4)
-    m1.metric("📋 Pending EXTID",len(candidates))
-    m2.metric("🧑‍🏫 Staff Loaded",len(sf))
-    m3.metric("📘 SubjectMap",len(ssmap))
-    m4.metric("🔖 Staged",len(st.session_state.staged))
+        filt_panel=panel.copy()
+        if ins_f!="All": filt_panel=filt_panel[filt_panel["INSCODE"].astype(str)==ins_f]
+        if nc_f !="All": filt_panel=filt_panel[filt_panel["NCNO"].astype(str)==nc_f]
+        candidates=filt_panel[filt_panel.apply(needs_ext,axis=1)].copy()
 
-    st.markdown('<hr class="thin">',unsafe_allow_html=True)
+        if show_f=="Pending Only":  view_panel=candidates.copy()
+        elif show_f=="Filled Only": view_panel=filt_panel[filt_panel.apply(has_ext,axis=1)].copy()
+        else:                       view_panel=filt_panel.copy()
 
-    # ── PANEL PREVIEW (color-coded) ──
-    st.markdown('<div class="sec-hdr">📊 Panel Preview</div>',unsafe_allow_html=True)
-    if not view_panel.empty:
-        pv=view_panel.copy()
-        if not submap.empty:
-            pv=pv.merge(submap[["SUBCODE","SUBNAME"]],how="left",on="SUBCODE")
-        pv["INT_NAME"]=pv["INTID"].apply(lambda x:get_name(sf,x))
-        pv["EXT_NAME"]=pv["EXTID"].apply(lambda x:get_name(sf,x))
-        pv["STATUS"]=pv.apply(lambda r:"✅ Filled" if has_ext(r) else "⏳ Pending",axis=1)
-        show_cols=[c for c in ["STATUS","INSCODE","NCNO","SUBCODE","SUBNAME","NOC","INTID","INT_NAME","EXTID","EXT_NAME"] if c in pv.columns]
-        def sty_status(v): return "background-color:#0d2218;color:#86efac" if v=="✅ Filled" else "background-color:#2d1515;color:#fca5a5"
-        def sty_ext(v):
-            v2=str(v).strip()
-            return ("background-color:#0d2218;color:#86efac" if v2 and not is_zero(v2)
-                    else "background-color:#2d1515;color:#fca5a5")
-        styled=pv[show_cols].fillna("").style\
-            .applymap(sty_status,subset=["STATUS"])\
-            .applymap(sty_ext,subset=["EXTID"])
-        st.dataframe(styled,use_container_width=True,height=250)
-    else:
-        st.markdown('<div class="info-card">ℹ️ No panel rows for current filters.</div>',unsafe_allow_html=True)
+        m1,m2,m3,m4=st.columns(4)
+        m1.metric("📋 Pending EXTID",len(candidates))
+        m2.metric("🧑‍🏫 Staff Loaded",len(sf))
+        m3.metric("📘 SubjectMap",len(ssmap))
+        m4.metric("🔖 Staged",len(st.session_state.staged))
 
-    st.markdown('<hr class="thin">',unsafe_allow_html=True)
+        st.markdown('<hr class="thin">',unsafe_allow_html=True)
 
-    # ── AUTO ALLOCATE ──
-    st.markdown('<div class="sec-hdr">🤖 Auto-Allocate</div>',unsafe_allow_html=True)
-    st.markdown('<div class="info-card">Picks 🟢 Best (0 duties) staff first → different INSTT → matches SUBCODE mapping → stages all pending rows</div>',unsafe_allow_html=True)
-    if st.button("🤖 Auto-Allocate ALL Pending",type="primary"):
-        if sf.empty: st.error("❌ Upload staff data first!")
+        # Panel Preview
+        st.markdown('<div class="sec-hdr">📊 Panel Preview</div>',unsafe_allow_html=True)
+        if not view_panel.empty:
+            pv=view_panel.copy()
+            if not submap.empty:
+                pv=pv.merge(submap[["SUBCODE","SUBNAME"]],how="left",on="SUBCODE")
+            pv["INT_NAME"]=pv["INTID"].apply(lambda x:get_name(sf,x))
+            pv["EXT_NAME"]=pv["EXTID"].apply(lambda x:get_name(sf,x))
+            pv["STATUS"]=pv.apply(lambda r:"✅ Filled" if has_ext(r) else "⏳ Pending",axis=1)
+            show_cols=[c for c in ["STATUS","INSCODE","NCNO","SUBCODE","SUBNAME","NOC","INTID","INT_NAME","EXTID","EXT_NAME"] if c in pv.columns]
+            def sty_status(v): return "background-color:#0d2218;color:#86efac" if v=="✅ Filled" else "background-color:#2d1515;color:#fca5a5"
+            def sty_ext(v):
+                v2=str(v).strip()
+                return ("background-color:#0d2218;color:#86efac" if v2 and not is_zero(v2)
+                        else "background-color:#2d1515;color:#fca5a5")
+            styled=pv[show_cols].fillna("").style\
+                .applymap(sty_status,subset=["STATUS"])\
+                .applymap(sty_ext,subset=["EXTID"])
+            st.dataframe(styled,use_container_width=True,height=250)
         else:
-            res,skip=auto_allocate(candidates,sf,ssmap if not ssmap.empty else None)
-            for k,v in res.items(): st.session_state.staged[str(k)]=v
-            st.success(f"✅ Auto-staged {len(res)} rows.")
-            if skip:
-                with st.expander(f"⚠️ {len(skip)} rows skipped"):
-                    st.dataframe(pd.DataFrame([{"idx":k,"reason":v} for k,v in skip.items()]),use_container_width=True)
-        st.rerun()
+            st.markdown('<div class="info-card">ℹ️ No panel rows for current filters.</div>',unsafe_allow_html=True)
 
-    st.markdown('<hr class="thin">',unsafe_allow_html=True)
+        st.markdown('<hr class="thin">',unsafe_allow_html=True)
+        st.markdown('<div class="sec-hdr">🤖 Auto-Allocate</div>',unsafe_allow_html=True)
+        st.markdown('<div class="info-card">🟢 Willing staff (mapped) → 🟡 Same dept → ⚪ Others · All sorted by least duties · Must be external (diff INSTT)</div>',unsafe_allow_html=True)
 
-    # ── PER-ROW MANUAL ALLOCATION ──
-    st.markdown('<div class="sec-hdr">📝 Per-Row Manual Allocation</div>',unsafe_allow_html=True)
+        if st.button("🤖 Auto-Allocate ALL Pending",type="primary"):
+            if sf.empty: st.error("❌ Upload staff data first!")
+            else:
+                res,skip=auto_allocate(candidates,sf,ssmap if not ssmap.empty else None)
+                for k,v in res.items(): st.session_state.staged[str(k)]=v
+                st.success(f"✅ Auto-staged {len(res)} rows.")
+                if skip:
+                    with st.expander(f"⚠️ {len(skip)} rows skipped"):
+                        st.dataframe(pd.DataFrame([{"idx":k,"reason":v} for k,v in skip.items()]),use_container_width=True)
+            st.rerun()
 
-    if candidates.empty:
-        st.markdown('<div class="ok-card">🎉 All rows in current filter have EXTID assigned!</div>',unsafe_allow_html=True)
-        st.markdown('<div class="info-card">💡 Change filter to "All Rows" or select a different INSCODE to see filled rows.</div>',unsafe_allow_html=True)
-    else:
-        for _,row in candidates.reset_index().iterrows():
-            pidx=int(row["index"])
-            sc=str(row.get("SUBCODE","")).strip()
-            sn=get_subname(submap,sc)
-            ins=str(row.get("INSCODE","")).strip()
-            nc=str(row.get("NCNO","")).strip()
-            noc=str(row.get("NOC","")).strip()
-            intid=norm_id(row.get("INTID",""))
-            intname=get_name(sf,intid)
-            int_desig=get_desig(sf,intid)
-            int_phone=get_phone(sf,intid)
-            cur_ext=norm_id(row.get("EXTID",""))
-            sv_val=st.session_state.staged.get(str(pidx),"")
+        # Apply All Staged
+        staged_map=st.session_state.staged
+        if staged_map:
+            st.markdown('<hr class="thin">',unsafe_allow_html=True)
+            st.markdown('<div class="sec-hdr">🚀 Apply All Staged</div>',unsafe_allow_html=True)
+            with st.expander(f"👁️ Preview {len(staged_map)} staged assignments"):
+                rows=[]
+                for k,v in list(staged_map.items())[:40]:
+                    try:
+                        pi=int(k); r=st.session_state.panel.loc[pi] if pi in st.session_state.panel.index else {}
+                        sid_v=extract_sid(v)
+                        cnt_d=duty_stats(sf).get(sid_v,{}).get("count",0)
+                        rows.append({"Row":k,"INSCODE":r.get("INSCODE","?"),"SUBCODE":r.get("SUBCODE","?"),
+                                     "→ EXTID":sid_v,"Name":get_name(sf,sid_v),
+                                     "Priority":f"{priority_icon(cnt_d)} {cnt_d} duties"})
+                    except: rows.append({"Row":k,"→ EXTID":v})
+                st.dataframe(pd.DataFrame(rows),use_container_width=True,height=220)
 
-            suggs=ext_suggestions(row,sf,ssmap if not ssmap.empty else None)
-            s_labels=["— Select External Examiner —"]
-            for s in suggs:
-                s_labels.append(make_dropdown_label(s))
+            a1,a2=st.columns(2)
+            if a1.button("✅ Apply ALL Staged",type="primary",use_container_width=True):
+                ok_c,fc2b=[],[]
+                for k,v in list(staged_map.items()):
+                    try: pi=int(k)
+                    except: fc2b.append(k); continue
+                    if pi not in st.session_state.panel.index: fc2b.append(k); continue
+                    sid_c=extract_sid(v)
+                    if sid_c:
+                        st.session_state.panel.at[pi,"EXTID"]=sid_c
+                        st.session_state.staged.pop(k,None); ok_c.append(k)
+                    else: fc2b.append(k)
+                P(); st.success(f"✅ Applied {len(ok_c)} · ❌ Failed {len(fc2b)}")
+                st.rerun()
+            if a2.button("🗑️ Clear All Staged",use_container_width=True):
+                st.session_state.staged={}; st.success("✅ Cleared"); st.rerun()
 
-            with st.container():
-                # Row header
-                h1,h2,h3=st.columns([3,3,2])
-                h1.markdown(
-                    f'<div style="font-size:.87rem">'
-                    f'🏫 <b style="color:#e6edf3">{ins}</b> &nbsp;·&nbsp; 🏭 <span style="color:#c9d1d9">{nc}</span>'
-                    f' &nbsp;·&nbsp; 📚 <code style="background:#010409;padding:1px 6px;border-radius:4px;color:#79c0ff">{sc}</code>'
-                    f'{"<br><small style=color:#8b949e>"+sn+"</small>" if sn else ""}</div>',
-                    unsafe_allow_html=True)
-                h2.markdown(
-                    f'<div style="font-size:.82rem;color:#8b949e">'
-                    f'👥 <b style="color:#c9d1d9">{noc}</b> students'
-                    f'{"<br>🎓 INT: <code style=background:#010409;padding:1px 5px;border-radius:4px;color:#fbbf24>"+intid+"</code>" if intid else "<br><span style=color:#6e7681>No INT assigned</span>"}'
-                    f'{"<span style=color:#c9d1d9> "+intname+"</span>" if intname else ""}'
-                    f'{"<br><small style=color:#6e7681>"+int_desig+"</small>" if int_desig else ""}</div>',
-                    unsafe_allow_html=True)
+    # ── MANUAL ALLOCATE SUB-TAB ──
+    with etab_manual:
+        st.markdown('<div class="sec-hdr">📝 Manual Allocation — Card View</div>',unsafe_allow_html=True)
+        st.markdown("""
+<div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+  <span class="badge-green">🟢 Willing (Mapped to Subject)</span>
+  <span class="badge-yellow">🟡 Same Dept (Not Mapped)</span>
+  <span style="color:#8b949e;font-size:.78rem">⚪ Other Staff (Least Duties First)</span>
+</div>""", unsafe_allow_html=True)
 
-                # Status indicator
-                if cur_ext:
-                    ext_name=get_name(sf,cur_ext); ext_desig=get_desig(sf,cur_ext)
-                    h3.markdown(f'<div class="ok-card" style="font-size:.79rem;padding:5px 8px">✅ <b>{cur_ext}</b><br>{ext_name}<br><small>{ext_desig}</small></div>',unsafe_allow_html=True)
-                elif sv_val:
-                    sv_id=extract_sid(sv_val)
-                    h3.markdown(f'<div class="warn-card" style="font-size:.79rem;padding:5px 8px">🟡 Staged<br><b>{sv_id}</b><br><small>{get_name(sf,sv_id)}</small></div>',unsafe_allow_html=True)
-                else:
-                    h3.markdown('<div class="err-card" style="font-size:.79rem;padding:5px 8px">⏳ Not assigned</div>',unsafe_allow_html=True)
+        # Filters for manual allocation
+        mfc1,mfc2,mfc3=st.columns([2,2,2])
+        m_ins_f = mfc1.selectbox("🏫 Filter INSCODE",["All"]+sorted(set(panel["INSCODE"].astype(str))),key="ma_i")
+        m_nc_f  = mfc2.selectbox("🏭 Filter NCNO",   ["All"]+sorted(set(panel["NCNO"].astype(str))),   key="ma_n")
+        m_show  = mfc3.selectbox("👁️ Show",["Pending Only","All Rows","Filled Only"],key="ma_sh")
 
-                # Dropdown
-                r1,r2,r3=st.columns([5,3,1])
-                cur_lbl=sv_val if sv_val in s_labels else s_labels[0]
-                di=s_labels.index(cur_lbl) if cur_lbl in s_labels else 0
-                sel=r1.selectbox(
-                    f"💡 {len(suggs)} eligible staff (🟢best first)",
-                    s_labels, index=di, key=f"sel_{pidx}",
-                    help="Green=0 duties (best), Yellow=1-2 duties, Red=3+ duties")
+        m_filt=panel.copy()
+        if m_ins_f!="All": m_filt=m_filt[m_filt["INSCODE"].astype(str)==m_ins_f]
+        if m_nc_f !="All": m_filt=m_filt[m_filt["NCNO"].astype(str)==m_nc_f]
 
-                man=r2.text_input("",value="",key=f"man_{pidx}",
+        if m_show=="Pending Only":  m_cands=m_filt[m_filt.apply(needs_ext,axis=1)].copy()
+        elif m_show=="Filled Only": m_cands=m_filt[m_filt.apply(has_ext,axis=1)].copy()
+        else:                       m_cands=m_filt.copy()
+
+        ma_m1,ma_m2=st.columns(2)
+        ma_m1.metric("📋 Showing Rows",len(m_cands))
+        ma_m2.metric("🔖 Staged",len(st.session_state.staged))
+
+        st.markdown('<hr class="thin">',unsafe_allow_html=True)
+
+        if m_cands.empty:
+            st.markdown('<div class="ok-card">🎉 No rows match current filter!</div>',unsafe_allow_html=True)
+        else:
+            for _,row in m_cands.reset_index().iterrows():
+                pidx    = int(row["index"])
+                sc      = str(row.get("SUBCODE","")).strip()
+                sn      = get_subname(submap,sc)
+                ins     = str(row.get("INSCODE","")).strip()
+                nc      = str(row.get("NCNO","")).strip()
+                noc     = str(row.get("NOC","")).strip()
+                intid   = norm_id(row.get("INTID",""))
+                intname = get_name(sf,intid)
+                int_desig= get_desig(sf,intid)
+                int_dep  = get_dep(sf,intid)
+                int_phone= get_phone(sf,intid)
+                cur_ext  = norm_id(row.get("EXTID",""))
+                sv_val   = st.session_state.staged.get(str(pidx),"")
+
+                # Build dropdown options
+                willing,same_dept,others = ext_suggestions_v2(row,sf,ssmap if not ssmap.empty else None)
+                opts = build_dropdown_options(willing,same_dept,others)
+                total_suggs = len(willing)+len(same_dept)+len(others)
+
+                # Card style based on status
+                card_cls="alloc-card-done" if cur_ext else ("alloc-card-staged" if sv_val else "alloc-card-pending")
+
+                st.markdown(f'<div class="alloc-card {card_cls}">', unsafe_allow_html=True)
+
+                # ── Row 1: Panel Info ──
+                r1a,r1b,r1c = st.columns([3,3,2])
+                with r1a:
+                    st.markdown(
+                        f'<div style="font-size:.9rem;line-height:1.7">'
+                        f'<b style="color:#e6edf3">🏫 {ins}</b> &nbsp;·&nbsp; '
+                        f'<span style="color:#93c5fd">NCNO: {nc}</span><br>'
+                        f'📚 <code style="background:#010409;padding:2px 7px;border-radius:4px;color:#79c0ff;font-size:.85rem">{sc}</code>'
+                        f'{" <span style=color:#8b949e;font-size:.8rem>"+sn+"</span>" if sn else ""}'
+                        f'<br><span style="color:#6e7681;font-size:.78rem">👥 {noc} Students · NOB: {str(row.get("NOB","")).strip()}</span>'
+                        f'</div>',unsafe_allow_html=True)
+                with r1b:
+                    # INT staff info
+                    if intid:
+                        st.markdown(
+                            f'<div style="font-size:.82rem;background:#0c1a2e;border-radius:6px;padding:8px 12px;border:1px solid #1d3557">'
+                            f'<div style="color:#6e7681;font-size:.72rem;margin-bottom:2px">🎓 INTERNAL EXAMINER</div>'
+                            f'<b style="color:#fbbf24">{intid}</b> · <span style="color:#e6edf3">{intname}</span><br>'
+                            f'<span style="color:#8b949e;font-size:.75rem">{int_desig}</span>'
+                            f'{" · <span style=color:#8b949e;font-size:.75rem>"+int_dep+"</span>" if int_dep else ""}'
+                            f'{" <br><span style=color:#6e7681;font-size:.72rem>📞 "+int_phone+"</span>" if int_phone else ""}'
+                            f'</div>',unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="warn-card" style="font-size:.8rem;padding:6px 10px">⚠️ No INTID assigned</div>',unsafe_allow_html=True)
+                with r1c:
+                    if cur_ext:
+                        ext_nm=get_name(sf,cur_ext); ext_desig=get_desig(sf,cur_ext); ext_phone=get_phone(sf,cur_ext)
+                        st.markdown(
+                            f'<div class="ok-card" style="font-size:.8rem;padding:7px 10px">'
+                            f'✅ <b>EXTID ASSIGNED</b><br>'
+                            f'<b>{cur_ext}</b><br>'
+                            f'<span>{ext_nm}</span><br>'
+                            f'<small>{ext_desig}</small>'
+                            f'{" <br><small>📞 "+ext_phone+"</small>" if ext_phone else ""}'
+                            f'</div>',unsafe_allow_html=True)
+                    elif sv_val:
+                        sv_id=extract_sid(sv_val)
+                        sv_nm=get_name(sf,sv_id)
+                        st.markdown(
+                            f'<div class="warn-card" style="font-size:.8rem;padding:7px 10px">'
+                            f'🟡 <b>STAGED</b><br><b>{sv_id}</b><br><span>{sv_nm}</span>'
+                            f'</div>',unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="err-card" style="font-size:.8rem;padding:7px 10px">⏳ Not Assigned</div>',unsafe_allow_html=True)
+
+                # ── Row 2: Stats badges ──
+                st.markdown(
+                    f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 10px">'
+                    f'<span class="alloc-badge">🟢 Willing: {len(willing)}</span>'
+                    f'<span class="alloc-badge">🟡 Same Dept: {len(same_dept)}</span>'
+                    f'<span class="alloc-badge">⚪ Others: {len(others)}</span>'
+                    f'<span class="alloc-badge" style="color:#8b5cf6 !important">📊 Total Eligible: {total_suggs}</span>'
+                    f'</div>',unsafe_allow_html=True)
+
+                # ── Row 3: Dropdown + Manual + Apply ──
+                r3a,r3b,r3c=st.columns([5,3,1])
+                # filter out header options for index calculation
+                valid_opts=[o for o in opts if not is_header_opt(o)]
+                cur_lbl = sv_val if sv_val in opts else opts[0]
+                di = opts.index(cur_lbl) if cur_lbl in opts else 0
+
+                sel=r3a.selectbox(
+                    f"💡 Select External Examiner — INSTT-Deptcode | StaffID | Name | Desig | Duties",
+                    opts, index=di, key=f"sel_{pidx}",
+                    help="🟢=Willing(mapped) 🟡=Same Dept ⚪=Other — All sorted by least duties")
+
+                man=r3b.text_input("",value="",key=f"man_{pidx}",
                                    placeholder="✏️ Manual Staff ID",
                                    label_visibility="collapsed",
-                                   help="Type Staff ID directly if not in list")
+                                   help="Type Staff ID directly")
 
-                if sel and sel!=s_labels[0]:
+                if sel and not is_header_opt(sel) and sel!=opts[0]:
                     st.session_state.staged[str(pidx)]=sel
                 if man.strip():
-                    st.session_state.staged[str(pidx)]=man.strip()
+                    st.session_state.staged[str(pidx)]=man.strip().upper()
 
-                # Apply button
-                if r3.button("▶",key=f"app_{pidx}",help="Apply now"):
-                    chosen=sv_val or (sel if sel!=s_labels[0] else "") or man.strip()
+                if r3c.button("▶",key=f"app_{pidx}",help="Apply now"):
+                    chosen=sv_val or (sel if not is_header_opt(sel) and sel!=opts[0] else "") or man.strip()
                     if not chosen:
                         st.warning("⚠️ Select or enter a Staff ID first")
                     else:
@@ -901,63 +1047,98 @@ with tab_ext:
                             st.rerun()
                         else: st.error("❌ Invalid Staff ID")
 
-                # Show selected staff card
-                if sel and sel!=s_labels[0]:
-                    parts=[p.strip() for p in re.sub(r'^[🟢🟡🔴]\s*','',sel).split("|")]
-                    sid_s=norm_id(parts[0]) if parts else ""
-                    name_s=parts[1] if len(parts)>1 else ""
-                    desig_s=parts[2] if len(parts)>2 else ""
-                    instt_s=parts[3].replace("🏫","").strip() if len(parts)>3 else ""
-                    duties_s=parts[4].replace("Duties:","").strip() if len(parts)>4 else ""
-                    cnt_v=int(duties_s) if duties_s.isdigit() else 0
-                    badge=priority_class(cnt_v)
-                    ph_s=get_phone(sf,sid_s)
+                # ── Row 4: Selected staff preview card ──
+                if sel and not is_header_opt(sel) and sel!=opts[0]:
+                    # parse label: EMOJI INSTT-depcode | StaffID | Name | Desig | Duties:N
+                    raw=re.sub(r'^[🟢🟡🔴⚪]\s*','',sel)
+                    parts=[p.strip() for p in raw.split("|")]
+                    instt_dep = parts[0] if len(parts)>0 else ""
+                    sid_s     = norm_id(parts[1]) if len(parts)>1 else ""
+                    name_s    = parts[2] if len(parts)>2 else ""
+                    desig_s   = parts[3] if len(parts)>3 else ""
+                    duties_raw= parts[4].replace("Duties:","").strip() if len(parts)>4 else "0"
+                    cnt_v     = int(duties_raw) if duties_raw.isdigit() else 0
+                    badge     = priority_class(cnt_v)
+                    ph_s      = get_phone(sf,sid_s)
+                    # determine category for badge color
+                    w_ids={s["sid"] for s in willing}
+                    yd_ids={s["sid"] for s in same_dept}
+                    cat_lbl="🟢 Willing" if sid_s in w_ids else ("🟡 Same Dept" if sid_s in yd_ids else "⚪ Other")
                     st.markdown(
-                        f'<div style="background:#0c1a2e;border-radius:6px;padding:7px 14px;margin:4px 0;font-size:.8rem;display:flex;gap:14px;flex-wrap:wrap;align-items:center">'
-                        f'<b style="color:#93c5fd">{sid_s}</b>'
-                        f'<span style="color:#c9d1d9">{name_s}</span>'
+                        f'<div style="background:#0c1a2e;border-radius:8px;padding:10px 16px;margin:6px 0;font-size:.82rem;border:1px solid #1d3557">'
+                        f'<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">'
+                        f'<b style="color:#93c5fd;font-size:.9rem">{sid_s}</b>'
+                        f'<span style="color:#e6edf3;font-weight:600">{name_s}</span>'
                         f'<span style="color:#8b949e">{desig_s}</span>'
-                        f'<span style="color:#8b949e">🏫 {instt_s}</span>'
-                        f'{"<span style=color:#8b949e>📞 "+ph_s+"</span>" if ph_s else ""}'
-                        f'<span class="{badge}">Duties: {duties_s}</span>'
-                        f'</div>',unsafe_allow_html=True)
+                        f'<span style="color:#8b949e">🏫 {instt_dep}</span>'
+                        f'{" <span style=color:#6e7681>📞 "+ph_s+"</span>" if ph_s else ""}'
+                        f'<span class="{badge}">Duties: {cnt_v}</span>'
+                        f'<span style="color:#c9d1d9;font-size:.76rem">{cat_lbl}</span>'
+                        f'</div></div>',unsafe_allow_html=True)
 
-                st.markdown('<hr class="thin">',unsafe_allow_html=True)
+                st.markdown('</div>',unsafe_allow_html=True)  # close alloc-card
+                st.markdown("",unsafe_allow_html=True)  # spacing
 
-    # ── APPLY ALL STAGED ──
-    staged_map=st.session_state.staged
-    if staged_map:
-        st.markdown('<hr class="thin">',unsafe_allow_html=True)
-        st.markdown('<div class="sec-hdr">🚀 Apply All Staged</div>',unsafe_allow_html=True)
-        with st.expander(f"👁️ Preview {len(staged_map)} staged assignments"):
-            rows=[]
-            for k,v in list(staged_map.items())[:40]:
-                try:
-                    pi=int(k); r=st.session_state.panel.loc[pi] if pi in st.session_state.panel.index else {}
-                    sid_v=extract_sid(v) if "|" in v else norm_id(v)
-                    cnt_d=duty_stats(sf).get(sid_v,{}).get("count",0)
-                    rows.append({"Row":k,"INSCODE":r.get("INSCODE","?"),"SUBCODE":r.get("SUBCODE","?"),
-                                 "→ EXTID":sid_v,"Name":get_name(sf,sid_v),
-                                 "Priority":f"{priority_icon(cnt_d)} {cnt_d} duties"})
-                except: rows.append({"Row":k,"→ EXTID":v})
-            st.dataframe(pd.DataFrame(rows),use_container_width=True,height=220)
+    # ── DOWNLOAD SUB-TAB (inside EXT Allocate) ──
+    with etab_edl:
+        st.markdown('<div class="sec-hdr">📥 Download — EXT Allocation Panel</div>',unsafe_allow_html=True)
+        all_p_dl = st.session_state.panel.copy()
+        sf_dl    = st.session_state.staff.copy()
+        sub_dl   = st.session_state.submap.copy()
+        exp_p    = [c for c in ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID"] if c in all_p_dl.columns]
 
-        a1,a2=st.columns(2)
-        if a1.button("✅ Apply ALL Staged",type="primary",use_container_width=True):
-            ok_c,fc2b=[],[]
-            for k,v in list(staged_map.items()):
-                try: pi=int(k)
-                except: fc2b.append(k); continue
-                if pi not in st.session_state.panel.index: fc2b.append(k); continue
-                sid_c=extract_sid(v) if "|" in v else norm_id(v)
-                if sid_c:
-                    st.session_state.panel.at[pi,"EXTID"]=sid_c
-                    st.session_state.staged.pop(k,None); ok_c.append(k)
-                else: fc2b.append(k)
-            P(); st.success(f"✅ Applied {len(ok_c)} · ❌ Failed {len(fc2b)}")
-            st.rerun()
-        if a2.button("🗑️ Clear All Staged",use_container_width=True):
-            st.session_state.staged={}; st.success("✅ Cleared"); st.rerun()
+        if all_p_dl.empty:
+            st.markdown('<div class="info-card">ℹ️ No panel data. Upload in Upload Centre tab.</div>',unsafe_allow_html=True)
+        else:
+            ef_cnt = all_p_dl["EXTID"].apply(norm_id).ne("").sum()
+            pend_cnt = len(all_p_dl) - ef_cnt
+            st.markdown(f'<div class="info-card">📊 Total: <b>{len(all_p_dl)}</b> · ✅ Filled: <b>{ef_cnt}</b> · ⏳ Pending: <b>{pend_cnt}</b></div>',unsafe_allow_html=True)
+
+            st.markdown('<span class="sub-hdr">📋 Panel CSV Downloads</span>',unsafe_allow_html=True)
+            dc1,dc2,dc3=st.columns(3)
+            with dc1:
+                st.download_button(
+                    label=f"📥 Full Panel CSV ({len(all_p_dl)} rows)",
+                    data=all_p_dl[exp_p].to_csv(index=False).encode(),
+                    file_name="panel_full.csv",mime="text/csv",use_container_width=True)
+            with dc2:
+                pend_df=all_p_dl[all_p_dl["EXTID"].apply(norm_id)==""]
+                st.download_button(
+                    label=f"📥 Pending EXTID ({len(pend_df)} rows)",
+                    data=pend_df[exp_p].to_csv(index=False).encode(),
+                    file_name="panel_pending.csv",mime="text/csv",use_container_width=True)
+            with dc3:
+                filled_df=all_p_dl[all_p_dl["EXTID"].apply(norm_id)!=""]
+                st.download_button(
+                    label=f"📥 Filled EXTID ({len(filled_df)} rows)",
+                    data=filled_df[exp_p].to_csv(index=False).encode(),
+                    file_name="panel_filled.csv",mime="text/csv",use_container_width=True)
+
+            st.markdown('<hr class="thin">',unsafe_allow_html=True)
+            st.markdown('<span class="sub-hdr">🖨️ PDF Duty Sheets</span>',unsafe_allow_html=True)
+
+            pdf_ins_f=st.selectbox("🏫 Filter by INSCODE",["All"]+sorted(set(all_p_dl["INSCODE"].astype(str))),key="edl_pdf_ins")
+            pdf_data=all_p_dl.copy()
+            if pdf_ins_f!="All": pdf_data=pdf_data[pdf_data["INSCODE"].astype(str)==pdf_ins_f]
+            st.markdown(f'<div class="info-card">📄 Generating duty sheets for <b>{len(pdf_data)}</b> panel rows</div>',unsafe_allow_html=True)
+
+            if RPDF:
+                if st.button("⚙️ Generate & Download PDF Duty Sheets",type="primary",use_container_width=True,key="edl_pdf_btn"):
+                    with st.spinner("Building PDF..."):
+                        try:
+                            pdf_b=generate_pdf_rl(pdf_data,sf_dl,sub_dl)
+                            st.download_button(
+                                "📄 ⬇️ Download PDF Duty Sheets",
+                                data=pdf_b,
+                                file_name=f"duty_sheets{'_'+pdf_ins_f if pdf_ins_f!='All' else ''}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key="edl_pdf_dl")
+                            st.success("✅ PDF ready — click above to download!")
+                        except Exception as e:
+                            st.error(f"❌ PDF error: {e}")
+            else:
+                st.markdown('<div class="warn-card">⚠️ reportlab not installed. Add `reportlab` to requirements.txt</div>',unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════
 # TAB 3 — DUTY MARKING
@@ -1063,7 +1244,7 @@ with tab_duty:
         st.markdown('<div class="info-card">ℹ️ Upload dated panel to see chart.</div>',unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════
-# TAB 4 — DOWNLOADS (separate tab)
+# TAB 4 — DOWNLOADS
 # ═══════════════════════════════════════════════════════
 with tab_dl:
     st.markdown('<div class="sec-hdr">📦 Downloads — Panel CSVs, Dated Panel, PDF Duty Sheets</div>',unsafe_allow_html=True)
@@ -1076,22 +1257,49 @@ with tab_dl:
     exp_p=[c for c in ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID"] if c in all_p.columns]
     exp_d=[c for c in ["INSCODE","NCNO","SUBCODE","REGL","NOC","NOB","INTID","EXTID","DATE_FROM","DATE_TO","ERROR"] if c in all_d.columns]
 
-    # ─── Section 1: Panel (No Dates) CSVs ───
+    # ── Section 1: PDF Duty Sheets (PRIMARY) ──
+    st.markdown('<span class="sub-hdr">🖨️ PDF Duty Sheets — Primary Download</span>',unsafe_allow_html=True)
+    if all_p.empty:
+        st.markdown('<div class="warn-card">⚠️ Upload panel data first.</div>',unsafe_allow_html=True)
+    else:
+        pdf_ins_f=st.selectbox("🏫 Filter by INSCODE for PDF",["All"]+sorted(set(all_p["INSCODE"].astype(str))),key="pdf_ins")
+        pdf_data=all_p.copy()
+        if pdf_ins_f!="All": pdf_data=pdf_data[pdf_data["INSCODE"].astype(str)==pdf_ins_f]
+        st.markdown(f'<div class="info-card">📄 Generating duty sheets for <b>{len(pdf_data)}</b> panel rows</div>',unsafe_allow_html=True)
+
+        if RPDF:
+            if st.button("⚙️ Generate PDF Duty Sheets",type="primary",use_container_width=True,key="main_pdf_btn"):
+                with st.spinner("Building PDF... (may take a moment)"):
+                    try:
+                        pdf_b=generate_pdf_rl(pdf_data,sf_dl,sub_dl)
+                        st.download_button(
+                            "📄 ⬇️ Download PDF Duty Sheets",
+                            data=pdf_b,
+                            file_name=f"duty_sheets{'_'+pdf_ins_f if pdf_ins_f!='All' else ''}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key="main_pdf_dl")
+                        st.success("✅ PDF ready — click above to download!")
+                    except Exception as e:
+                        st.error(f"❌ PDF error: {e}")
+        else:
+            st.markdown('<div class="warn-card">⚠️ reportlab not found. Make sure requirements.txt includes `reportlab`</div>',unsafe_allow_html=True)
+
+    st.markdown('<hr class="thin">',unsafe_allow_html=True)
+
+    # ── Section 2: Panel (No Dates) CSVs ──
     st.markdown('<span class="sub-hdr">📋 Panel (No Dates) — CSV Downloads</span>',unsafe_allow_html=True)
     if all_p.empty:
         st.markdown('<div class="info-card">ℹ️ No panel data. Upload in Upload Centre tab.</div>',unsafe_allow_html=True)
     else:
         inscodes_p=sorted(set(all_p["INSCODE"].astype(str)))
-        # Full download first
         dl_full_cols=st.columns([2,2,2])
         with dl_full_cols[0]:
             st.download_button(
                 label=f"📥 Full Panel CSV — {len(all_p)} rows",
                 data=all_p[exp_p].to_csv(index=False).encode(),
-                file_name="panel_full.csv", mime="text/csv",
-                use_container_width=True)
+                file_name="panel_full.csv", mime="text/csv", use_container_width=True)
         with dl_full_cols[1]:
-            # With SUBNAME column
             pf2=all_p.copy()
             if not sub_dl.empty:
                 pf2=pf2.merge(sub_dl[["SUBCODE","SUBNAME"]],how="left",on="SUBCODE")
@@ -1099,16 +1307,13 @@ with tab_dl:
             st.download_button(
                 label=f"📥 Panel CSV + SUBNAME — {len(pf2)} rows",
                 data=pf2[exp2].to_csv(index=False).encode(),
-                file_name="panel_full_subname.csv", mime="text/csv",
-                use_container_width=True)
+                file_name="panel_full_subname.csv", mime="text/csv", use_container_width=True)
         with dl_full_cols[2]:
-            # Pending only
             pend=all_p[all_p["EXTID"].apply(norm_id)==""]
             st.download_button(
                 label=f"📥 Pending EXTID Only — {len(pend)} rows",
                 data=pend[exp_p].to_csv(index=False).encode(),
-                file_name="panel_pending_extid.csv", mime="text/csv",
-                use_container_width=True)
+                file_name="panel_pending_extid.csv", mime="text/csv", use_container_width=True)
 
         st.markdown('<span class="sub-hdr" style="font-size:.82rem">📊 Per Institution</span>',unsafe_allow_html=True)
         cols_per_row=4
@@ -1119,14 +1324,14 @@ with tab_dl:
                 df_i=all_p[all_p["INSCODE"].astype(str)==ins][exp_p]
                 ef_i=df_i["EXTID"].apply(norm_id).ne("").sum()
                 cols[ci].download_button(
-                    label=f"📥 INSCODE {ins}\n({ef_i}/{len(df_i)} filled)",
+                    label=f"📥 {ins} ({ef_i}/{len(df_i)} filled)",
                     data=df_i.to_csv(index=False).encode(),
                     file_name=f"panel_{ins}.csv", mime="text/csv",
                     key=f"dl_p_{ins}", use_container_width=True)
 
     st.markdown('<hr class="thin">',unsafe_allow_html=True)
 
-    # ─── Section 2: Dated Panel CSVs ───
+    # ── Section 3: Dated Panel CSVs ──
     st.markdown('<span class="sub-hdr">🗓️ Dated Panel — CSV Downloads</span>',unsafe_allow_html=True)
     if all_d.empty:
         st.markdown('<div class="info-card">ℹ️ No dated panel. Upload in Duty Marking tab.</div>',unsafe_allow_html=True)
@@ -1137,15 +1342,13 @@ with tab_dl:
             st.download_button(
                 label=f"📥 Full Dated Panel — {len(all_d)} rows",
                 data=all_d[exp_d].to_csv(index=False).encode(),
-                file_name="dated_panel_full.csv", mime="text/csv",
-                use_container_width=True)
+                file_name="dated_panel_full.csv", mime="text/csv", use_container_width=True)
         with dl2[1]:
             errd=all_d[all_d["ERROR"].astype(str).str.strip()!=""]
             st.download_button(
                 label=f"📥 Errors Only — {len(errd)} rows",
                 data=errd[exp_d].to_csv(index=False).encode(),
-                file_name="dated_panel_errors.csv", mime="text/csv",
-                use_container_width=True)
+                file_name="dated_panel_errors.csv", mime="text/csv", use_container_width=True)
 
         st.markdown('<span class="sub-hdr" style="font-size:.82rem">📊 Per Institution</span>',unsafe_allow_html=True)
         ins_d_chunks=[inscodes_d[i:i+4] for i in range(0,len(inscodes_d),4)]
@@ -1161,55 +1364,7 @@ with tab_dl:
 
     st.markdown('<hr class="thin">',unsafe_allow_html=True)
 
-    # ─── Section 3: PDF Duty Sheets ───
-    st.markdown('<span class="sub-hdr">🖨️ PDF Duty Sheets</span>',unsafe_allow_html=True)
-    if all_p.empty:
-        st.markdown('<div class="warn-card">⚠️ Upload panel data first.</div>',unsafe_allow_html=True)
-    else:
-        pdf_ins_f=st.selectbox("🏫 Filter by INSCODE for PDF",["All"]+sorted(set(all_p["INSCODE"].astype(str))),key="pdf_ins")
-        pdf_data=all_p.copy()
-        if pdf_ins_f!="All": pdf_data=pdf_data[pdf_data["INSCODE"].astype(str)==pdf_ins_f]
-        st.markdown(f'<div class="info-card">📄 Will generate duty sheets for <b>{len(pdf_data)}</b> panel rows</div>',unsafe_allow_html=True)
-
-        if RPDF:
-            p1,p2=st.columns(2)
-            with p1:
-                if st.button("⚙️ Generate PDF Duty Sheets",type="primary",use_container_width=True):
-                    with st.spinner("Building PDF... (may take a moment)"):
-                        try:
-                            pdf_b=generate_pdf_rl(pdf_data,sf_dl,sub_dl)
-                            st.download_button(
-                                "📄 Download PDF Duty Sheets",
-                                data=pdf_b,
-                                file_name=f"duty_sheets{'_'+pdf_ins_f if pdf_ins_f!='All' else ''}.pdf",
-                                mime="application/pdf",
-                                use_container_width=True)
-                            st.success("✅ PDF ready!")
-                        except Exception as e:
-                            st.error(f"❌ PDF error: {e}")
-            with p2:
-                if st.button("🌐 Generate HTML (Print to PDF)",use_container_width=True):
-                    with st.spinner("Building HTML..."):
-                        html_b=generate_html_duties(pdf_data,sf_dl,sub_dl)
-                    st.download_button(
-                        "📄 Download HTML Duty Sheets",
-                        data=html_b,
-                        file_name=f"duty_sheets{'_'+pdf_ins_f if pdf_ins_f!='All' else ''}.html",
-                        mime="text/html",
-                        use_container_width=True)
-                    st.markdown('<div class="info-card">💡 Open HTML in browser → Ctrl+P → Save as PDF for perfect formatting</div>',unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="warn-card">⚠️ reportlab not found — add to requirements.txt</div>',unsafe_allow_html=True)
-            if st.button("🌐 Generate HTML Duty Sheets (fallback)",use_container_width=True):
-                with st.spinner("Building HTML..."):
-                    html_b=generate_html_duties(pdf_data,sf_dl,sub_dl)
-                st.download_button("📄 Download HTML",data=html_b,
-                    file_name="duty_sheets.html",mime="text/html",use_container_width=True)
-                st.markdown('<div class="info-card">💡 Open HTML in browser → Ctrl+P → Save as PDF</div>',unsafe_allow_html=True)
-
-    st.markdown('<hr class="thin">',unsafe_allow_html=True)
-
-    # ─── Section 4: Staff CSV ───
+    # ── Section 4: Staff CSV ──
     st.markdown('<span class="sub-hdr">🧑‍🏫 Staff Data</span>',unsafe_allow_html=True)
     if not sf_dl.empty:
         sf_exp=[c for c in ["Staff ID","INSTT","Name of the Staff","Department","dep code","Designation","Phone"] if c in sf_dl.columns]
